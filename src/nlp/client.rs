@@ -1,16 +1,20 @@
 //! OpenAI API client for natural language processing
 
 use super::types::*;
+use super::cache::ResponseCache;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
+use std::path::Path;
 
 pub struct OpenAIClient {
     client: Client,
     config: NLPConfig,
     last_request_time: Option<Instant>,
     request_count: u32,
+    /// Optional persistent cache for API responses
+    persistent_cache: Option<ResponseCache>,
 }
 
 impl OpenAIClient {
@@ -26,6 +30,55 @@ impl OpenAIClient {
             config,
             last_request_time: None,
             request_count: 0,
+            persistent_cache: None,
+        }
+    }
+
+    /// Create a new OpenAI client with persistent cache
+    pub fn with_cache<P: AsRef<Path>>(config: NLPConfig, cache_path: P) -> Result<Self, NLPError> {
+        let cache = ResponseCache::new(cache_path)?;
+        let mut client = Self::new(config);
+        client.persistent_cache = Some(cache);
+        Ok(client)
+    }
+
+    /// Create a new OpenAI client with persistent cache and custom TTL
+    pub fn with_cache_and_ttl<P: AsRef<Path>>(config: NLPConfig, cache_path: P, ttl_seconds: i64) -> Result<Self, NLPError> {
+        let cache = ResponseCache::with_ttl(cache_path, ttl_seconds)?;
+        let mut client = Self::new(config);
+        client.persistent_cache = Some(cache);
+        Ok(client)
+    }
+
+    /// Set or update the persistent cache
+    pub fn set_cache(&mut self, cache: ResponseCache) {
+        self.persistent_cache = Some(cache);
+    }
+
+    /// Remove the persistent cache
+    pub fn remove_cache(&mut self) {
+        self.persistent_cache = None;
+    }
+
+    /// Get cache statistics if cache is enabled
+    pub fn cache_stats(&self) -> Option<super::cache::CacheStats> {
+        self.persistent_cache.as_ref().map(|c| c.stats())
+    }
+
+    /// Clear the persistent cache if enabled
+    pub fn clear_cache(&self) -> Result<(), NLPError> {
+        if let Some(ref cache) = self.persistent_cache {
+            cache.clear()?;
+        }
+        Ok(())
+    }
+
+    /// Cleanup expired cache entries
+    pub fn cleanup_cache(&self) -> Result<usize, NLPError> {
+        if let Some(ref cache) = self.persistent_cache {
+            cache.cleanup()
+        } else {
+            Ok(0)
         }
     }
 
@@ -57,6 +110,13 @@ impl OpenAIClient {
 
     /// Parse natural language input into a structured command
     pub async fn parse_command(&mut self, input: &str) -> NLPResult<NLPCommand> {
+        // Check persistent cache first if enabled
+        if let Some(ref cache) = self.persistent_cache {
+            if let Some(cached) = cache.get(input) {
+                return Ok(cached);
+            }
+        }
+
         if !self.config.enabled {
             return Err(NLPError::ConfigError("NLP is not enabled".to_string()));
         }
@@ -281,6 +341,10 @@ Examples:
                     if let Some("parse_task_command") = function.get("name").and_then(|n| n.as_str()) {
                         if let Some(arguments) = function.get("arguments") {
                             let command: NLPCommand = serde_json::from_value(arguments.clone())?;
+                            // Cache the successful response
+                            if let Some(ref cache) = self.persistent_cache {
+                                let _ = cache.put(input, &command);
+                            }
                             return Ok(command);
                         }
                     }
@@ -303,6 +367,8 @@ Examples:
     }
 
     /// Parse natural language input into a structured command with context
+    /// Note: We don't cache context-aware parses since they depend on dynamic context
+    /// which changes between sessions
     pub async fn parse_command_with_context(
         &mut self,
         input: &str,
@@ -584,6 +650,7 @@ For follow-up commands, use context:
     }
 
     /// Simple fallback parsing when tool calling fails
+    /// Note: We don't cache fallback parses as they are lower quality results
     fn fallback_parse(&self, input: &str) -> NLPResult<NLPCommand> {
         let input_lower = input.to_lowercase();
 

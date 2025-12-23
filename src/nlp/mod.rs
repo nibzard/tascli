@@ -3,6 +3,7 @@
 //! This module provides natural language parsing capabilities using OpenAI's Responses API,
 //! allowing users to interact with tascli using natural language commands.
 
+pub mod cache;
 pub mod client;
 pub mod parser;
 pub mod mapper;
@@ -19,6 +20,7 @@ mod integration_tests;
 #[cfg(test)]
 mod natural_language_patterns_tests;
 
+pub use cache::{ResponseCache, CacheStats};
 pub use client::OpenAIClient;
 pub use types::*;
 pub use parser::NLPParser;
