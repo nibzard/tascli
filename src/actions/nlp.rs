@@ -15,8 +15,9 @@ use crate::{
         NLPParser, SequentialExecutor, CompoundExecutionMode,
         PreviewManager, commands_to_previews, ConfirmationResult,
         SuggestionEngine, SuggestionRequest, PatternMatcher,
-        ErrorRecoveryEngine, InteractiveRecoveryHandler,
-        LearningEngine, LearningStats,
+        ErrorRecoveryEngine,
+        LearningEngine, LearningStats, format_action,
+        PersonalizationEngine, get_user_id,
         ActionType,
     },
 };
@@ -46,6 +47,12 @@ pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), Str
 
         // Create parser
         let parser = NLPParser::new(nlp_config.clone());
+
+        // Initialize personalization engine
+        let user_id = get_user_id();
+        if let Ok(personalization_db_path) = config::get_personalization_db_path() {
+            let _ = parser.init_personalization(&personalization_db_path, user_id).await;
+        }
 
         // Parse the natural language command, checking for compound commands
         match parser.parse_to_compound_args(&cmd.description).await {
@@ -474,6 +481,219 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
                     }
                 }
             })
+        },
+
+        NLPConfigCommand::PersonalizationStatus => {
+            let personalization_db_path = config::get_personalization_db_path()?;
+            let user_id = get_user_id();
+
+            let engine = PersonalizationEngine::with_db(&personalization_db_path, user_id);
+            match engine {
+                Ok(engine) => {
+                    if let Some(stats) = engine.get_stats() {
+                        println!("Personalization Statistics:");
+                        println!("==========================");
+                        println!();
+                        println!("  User ID: {}", stats.user_id);
+                        println!("  Total patterns learned: {}", stats.total_patterns);
+                        println!("  Total shortcuts: {}", stats.total_shortcuts);
+                        println!("  Total category preferences: {}", stats.total_categories);
+                        println!("  Total commands processed: {}", stats.total_commands);
+
+                        // Show frequent patterns
+                        if let Ok(patterns) = engine.get_frequent_patterns(3) {
+                            println!();
+                            println!("  Frequent patterns (3+ uses):");
+                            for pattern in patterns.iter().take(5) {
+                                println!("    - '{}' ({} uses, {:.0}% success rate)",
+                                    pattern.pattern, pattern.count, pattern.success_rate * 100.0);
+                            }
+                        }
+
+                        // Show shortcuts
+                        if let Ok(shortcuts) = engine.get_shortcuts() {
+                            if !shortcuts.is_empty() {
+                                println!();
+                                println!("  Your shortcuts:");
+                                for shortcut in shortcuts {
+                                    println!("    - '{}': {} {}",
+                                        shortcut.shortcut,
+                                        format_action(&shortcut.command.action),
+                                        shortcut.command.content
+                                    );
+                                }
+                            }
+                        }
+
+                        if stats.total_patterns == 0 {
+                            println!();
+                            print_yellow("No personalization data yet. The system will learn as you use commands.");
+                        }
+
+                        Ok(())
+                    } else {
+                        print_red("Failed to get personalization statistics.");
+                        Err("Failed to get statistics".to_string())
+                    }
+                }
+                Err(e) => {
+                    print_red(&format!("Failed to access personalization database: {}", e));
+                    Err(format!("Failed to access personalization database: {}", e))
+                }
+            }
+        },
+
+        NLPConfigCommand::PersonalizationReset => {
+            let personalization_db_path = config::get_personalization_db_path()?;
+            let user_id = get_user_id();
+
+            let engine = PersonalizationEngine::with_db(&personalization_db_path, user_id);
+            match engine {
+                Ok(engine) => {
+                    engine.clear()
+                        .map_err(|e| format!("Failed to clear personalization data: {}", e))?;
+                    print_green("All personalization data has been reset.");
+                    Ok(())
+                }
+                Err(e) => {
+                    Err(format!("Failed to access personalization database: {}", e))
+                }
+            }
+        },
+
+        NLPConfigCommand::PersonalizationExport => {
+            let personalization_db_path = config::get_personalization_db_path()?;
+            let user_id = get_user_id();
+
+            let engine = PersonalizationEngine::with_db(&personalization_db_path, user_id);
+            match engine {
+                Ok(engine) => {
+                    let data = engine.export()
+                        .map_err(|e| format!("Failed to export personalization data: {}", e))?;
+
+                    println!("{}", data);
+                    print_yellow("\nCopy this JSON to backup your personalization data.");
+                    Ok(())
+                }
+                Err(e) => {
+                    Err(format!("Failed to access personalization database: {}", e))
+                }
+            }
+        },
+
+        NLPConfigCommand::PersonalizationImport { file } => {
+            print_yellow("Import functionality requires manual JSON parsing. Use exported data as reference.");
+            print_yellow("Shortcuts can be created using: tascli nlp config create-shortcut");
+            Ok(())
+        },
+
+        NLPConfigCommand::CreateShortcut { shortcut, action, content, category } => {
+            let personalization_db_path = config::get_personalization_db_path()?;
+            let user_id = get_user_id();
+
+            let engine = PersonalizationEngine::with_db(&personalization_db_path, user_id);
+            match engine {
+                Ok(engine) => {
+                    // Parse the action string
+                    let action_type = match action.to_lowercase().as_str() {
+                        "task" | "add" => ActionType::Task,
+                        "done" | "complete" => ActionType::Done,
+                        "update" | "edit" => ActionType::Update,
+                        "delete" | "remove" => ActionType::Delete,
+                        "list" | "show" => ActionType::List,
+                        "record" => ActionType::Record,
+                        _ => return Err(format!("Unknown action: {}", action)),
+                    };
+
+                    let command = crate::nlp::NLPCommand {
+                        action: action_type.clone(),
+                        content: content.clone(),
+                        category: category.clone(),
+                        ..Default::default()
+                    };
+
+                    engine.create_shortcut(&shortcut, &command)
+                        .map_err(|e| format!("Failed to create shortcut: {}", e))?;
+
+                    print_green(&format!("Created shortcut '{}' -> {} {}", shortcut, action_type, content));
+                    print_yellow(&format!("Use: tascli nlp '{}'", shortcut));
+                    Ok(())
+                }
+                Err(e) => {
+                    Err(format!("Failed to access personalization database: {}", e))
+                }
+            }
+        },
+
+        NLPConfigCommand::ListShortcuts => {
+            let personalization_db_path = config::get_personalization_db_path()?;
+            let user_id = get_user_id();
+
+            let engine = PersonalizationEngine::with_db(&personalization_db_path, user_id);
+            match engine {
+                Ok(engine) => {
+                    let shortcuts = engine.get_shortcuts()
+                        .map_err(|e| format!("Failed to get shortcuts: {}", e))?;
+
+                    if shortcuts.is_empty() {
+                        print_yellow("No shortcuts created yet.");
+                        println!("Create shortcuts with: tascli nlp config create-shortcut");
+                        return Ok(());
+                    }
+
+                    println!("Your Personalized Shortcuts:");
+                    println!("===========================");
+                    println!();
+
+                    for shortcut in shortcuts {
+                        println!("  '{}' (used {} times)",
+                            shortcut.shortcut,
+                            shortcut.usage_count
+                        );
+                        println!("     Expands to: {} {}",
+                            format_action(&shortcut.command.action),
+                            shortcut.command.content
+                        );
+                        if let Some(ref cat) = shortcut.command.category {
+                            println!("     Category: {}", cat);
+                        }
+                        println!("     Confidence: {:.0}%", shortcut.confidence * 100.0);
+                        println!();
+                    }
+
+                    print_yellow("Use shortcuts with: tascli nlp '<shortcut>'");
+
+                    Ok(())
+                }
+                Err(e) => {
+                    Err(format!("Failed to access personalization database: {}", e))
+                }
+            }
+        },
+
+        NLPConfigCommand::DeleteShortcut { shortcut } => {
+            let personalization_db_path = config::get_personalization_db_path()?;
+            let user_id = get_user_id();
+
+            let db = crate::nlp::PersonalizationDB::new(&personalization_db_path, user_id)
+                .map_err(|e| format!("Failed to access database: {}", e))?;
+
+            // Delete the shortcut using direct SQL
+            match db.conn.execute(
+                "DELETE FROM shortcuts WHERE user_id = ?1 AND shortcut = ?2",
+                [&db.user_id, &shortcut.to_lowercase()],
+            ) {
+                Ok(rows) => {
+                    if rows > 0 {
+                        print_green(&format!("Shortcut '{}' deleted.", shortcut));
+                        Ok(())
+                    } else {
+                        print_yellow(&format!("Shortcut '{}' not found.", shortcut));
+                        Ok(())
+                    }
+                }
+                Err(e) => Err(format!("Failed to delete shortcut: {}", e)),
+            }
         },
     }
 }

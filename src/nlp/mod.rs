@@ -18,6 +18,7 @@ pub mod preview;
 pub mod suggestions;
 pub mod error_recovery;
 pub mod learning;
+pub mod personalization;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -104,4 +105,16 @@ pub use learning::{
     PatternType,
     PatternCorrection,
     LearningStats,
+    format_action,
+};
+pub use personalization::{
+    UserProfile,
+    PhrasePattern,
+    PatternFrequency,
+    PersonalizedShortcut,
+    PersonalizationDB,
+    PersonalizationEngine,
+    PersonalizedPatternMatcher,
+    PersonalizationStats,
+    get_user_id,
 };

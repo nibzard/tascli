@@ -7,6 +7,7 @@ use super::validator::CommandValidator;
 use super::context::{CommandContext, FuzzyMatcher};
 use super::pattern_matcher::{PatternMatcher, PatternMatch};
 use super::learning::LearningEngine;
+use super::personalization::PersonalizationEngine;
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +26,8 @@ pub struct NLPParser {
     pattern_matcher_enabled: bool,
     /// Learning engine for adaptive improvements from user corrections
     learning_engine: Arc<Mutex<LearningEngine>>,
+    /// Personalization engine for user-specific patterns
+    personalization_engine: Arc<Mutex<PersonalizationEngine>>,
 }
 
 impl NLPParser {
@@ -37,6 +40,7 @@ impl NLPParser {
         let context = Arc::new(Mutex::new(CommandContext::default()));
         let pattern_matcher_enabled = true;
         let learning_engine = Arc::new(Mutex::new(LearningEngine::new()));
+        let personalization_engine = Arc::new(Mutex::new(PersonalizationEngine::new()));
 
         Self {
             client,
@@ -46,6 +50,7 @@ impl NLPParser {
             context,
             pattern_matcher_enabled,
             learning_engine,
+            personalization_engine,
         }
     }
 
@@ -57,6 +62,7 @@ impl NLPParser {
         let context = Arc::new(Mutex::new(CommandContext::new(categories)));
         let pattern_matcher_enabled = true;
         let learning_engine = Arc::new(Mutex::new(LearningEngine::new()));
+        let personalization_engine = Arc::new(Mutex::new(PersonalizationEngine::new()));
 
         Self {
             client,
@@ -66,6 +72,7 @@ impl NLPParser {
             context,
             pattern_matcher_enabled,
             learning_engine,
+            personalization_engine,
         }
     }
 
@@ -77,9 +84,29 @@ impl NLPParser {
         Ok(())
     }
 
+    /// Initialize the personalization engine with a database path
+    pub async fn init_personalization(&self, db_path: &std::path::Path, user_id: String) -> Result<(), NLPError> {
+        let engine = PersonalizationEngine::with_db(db_path, user_id)?;
+        let mut personalization = self.personalization_engine.lock().await;
+        *personalization = engine;
+        Ok(())
+    }
+
     /// Parse natural language input and return a structured command
     pub async fn parse(&self, input: &str) -> NLPResult<NLPCommand> {
-        // Check learning engine first for learned corrections
+        // Check personalization engine first for user-specific patterns
+        let personalization = self.personalization_engine.lock().await;
+        if let Some(personalized_command) = personalization.get_personalized_command(input) {
+            drop(personalization);
+            // Update context with personalized command
+            let mut context_state = self.context.lock().await;
+            context_state.add_command(personalized_command.clone(), input.to_string());
+            drop(context_state);
+            return Ok(personalized_command);
+        }
+        drop(personalization);
+
+        // Check learning engine for learned corrections
         let learning = self.learning_engine.lock().await;
         if let Some(learned_command) = learning.apply_learning(input) {
             drop(learning);
@@ -186,6 +213,11 @@ impl NLPParser {
         if self.config.cache_commands {
             self.cache_command(input, command.clone()).await;
         }
+
+        // Record the command pattern in personalization engine (non-blocking)
+        let personalization = self.personalization_engine.lock().await;
+        let _ = personalization.record_command(input, &command, true);
+        drop(personalization);
 
         Ok(command)
     }

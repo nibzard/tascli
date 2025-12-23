@@ -146,8 +146,17 @@
   - 23 unit tests covering all functionality
 - [x] Error recovery and clarification requests ✅
   - Implemented intelligent error recovery with categorization, clarification requests, guided prompts, and suggestion strategies. Integrated into NLP command handler.
-- [ ] Learning from user corrections
-- [ ] Personalized pattern recognition
+- [x] Learning from user corrections ✅
+  - Implemented adaptive learning system with SQLite storage for corrections and patterns
+  - Features: Jaro-Winkler fuzzy matching, pattern extraction, CLI commands (learning-stats, clear-learning, learn)
+  - Integrated with NLP parser to apply learned corrections automatically
+- [x] Personalized pattern recognition ✅
+  - Implemented user-specific pattern recognition with SQLite storage
+  - Features: UserProfile, PatternFrequencyTracker, PersonalizedPatternMatcher, PersonalizationEngine
+  - Tracks command patterns, category preferences, and shortcuts per user
+  - CLI commands: personalization-status, personalization-reset, personalization-export, create-shortcut, list-shortcuts, delete-shortcut
+  - Integrated with NLP parser to apply personalized patterns automatically
+  - 21 unit tests covering all functionality
 
 ### Enhanced UX
 - [ ] Add transparency in command mapping

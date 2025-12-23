@@ -248,6 +248,38 @@ pub enum NLPConfigCommand {
         #[arg(short, long)]
         category: Option<String>,
     },
+    /// show personalization statistics
+    PersonalizationStatus,
+    /// reset personalized patterns
+    PersonalizationReset,
+    /// export personalization data
+    PersonalizationExport,
+    /// import personalization data
+    PersonalizationImport {
+        /// JSON file to import from
+        file: String,
+    },
+    /// create a personalized shortcut
+    CreateShortcut {
+        /// Shortcut name/alias
+        shortcut: String,
+        /// The intended action (task, done, update, delete, list, record)
+        #[arg(short, long)]
+        action: String,
+        /// The intended content
+        #[arg(short, long)]
+        content: String,
+        /// The intended category (optional)
+        #[arg(short, long)]
+        category: Option<String>,
+    },
+    /// list all personalized shortcuts
+    ListShortcuts,
+    /// delete a personalized shortcut
+    DeleteShortcut {
+        /// Shortcut name to delete
+        shortcut: String,
+    },
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {

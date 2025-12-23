@@ -619,7 +619,7 @@ impl Default for LearningEngine {
 }
 
 /// Format action type for display
-fn format_action(action: &ActionType) -> &'static str {
+pub fn format_action(action: &ActionType) -> &'static str {
     match action {
         ActionType::Task => "add",
         ActionType::Record => "record",
