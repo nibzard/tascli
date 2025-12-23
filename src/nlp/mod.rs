@@ -16,6 +16,7 @@ pub mod batching;
 pub mod conditional;
 pub mod preview;
 pub mod suggestions;
+pub mod error_recovery;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -81,4 +82,16 @@ pub use suggestions::{
     SuggestionResult,
     SuggestionEngine,
     AutoCompleter,
+};
+pub use error_recovery::{
+    ErrorCategory,
+    RecoveryStrategy,
+    ClarificationRequest,
+    ClarificationOption,
+    ParameterChange,
+    GuidedPrompt,
+    RecoveryResult,
+    ErrorRecoveryEngine,
+    RecoveryContext,
+    InteractiveRecoveryHandler,
 };

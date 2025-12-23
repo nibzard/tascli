@@ -15,6 +15,7 @@ use crate::{
         NLPParser, SequentialExecutor, CompoundExecutionMode,
         PreviewManager, commands_to_previews, ConfirmationResult,
         SuggestionEngine, SuggestionRequest, PatternMatcher,
+        ErrorRecoveryEngine, InteractiveRecoveryHandler,
     },
 };
 
@@ -57,8 +58,32 @@ pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), Str
                 }
             },
             Err(e) => {
+                // Use error recovery to provide helpful suggestions
                 print_red(&format!("Failed to parse natural language command: {}", e));
-                print_yellow("Try rephrasing your command or use traditional tascli commands.");
+
+                // Try to get available categories for context
+                let available_categories: Vec<String> = match crate::db::crud::query_items(
+                    conn,
+                    &crate::db::item::ItemQuery::new()
+                ) {
+                    Ok(items) => {
+                        let mut cats: std::collections::HashSet<String> = std::collections::HashSet::new();
+                        for item in items {
+                            if !item.category.is_empty() {
+                                cats.insert(item.category);
+                            }
+                        }
+                        cats.into_iter().collect()
+                    },
+                    Err(_) => Vec::new(),
+                };
+
+                // Generate and display recovery options
+                let recovery_result = ErrorRecoveryEngine::handle_error(&e, &cmd.description, &available_categories);
+                ErrorRecoveryEngine::display_recovery(&recovery_result);
+
+                print_yellow("\nYou can also use traditional tascli commands or 'tascli nlp config patterns' to see available patterns.");
+
                 Err(e.to_string())
             }
         }
