@@ -4,6 +4,8 @@ use super::types::*;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
+use chrono::Datelike;
+use chrono::Timelike;
 
 /// Context information about previous commands and state
 #[derive(Debug, Clone)]
@@ -529,6 +531,8 @@ impl DeadlineInference {
             r"(?i)deadline\s+(?:is\s+)?(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
             r"(?i)before\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|eod)",
             r"(?i)on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
+            r"(?i)next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
+            r"(?i)for\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
         ];
 
         for pattern in &deadline_patterns {
@@ -600,11 +604,11 @@ impl DeadlineInference {
             }
         }
 
-        // "next week"/"next month" patterns
+        // "next week"/"next month" patterns - use tascli-compatible +Xd format
         let next_patterns = [
-            (r"next\s+week", "7 days"),
-            (r"next\s+month", "30 days"),
-            (r"next\s+year", "365 days"),
+            (r"next\s+week", "+7d"),
+            (r"next\s+month", "+30d"),
+            (r"next\s+year", "+365d"),
         ];
 
         for (pattern, description) in &next_patterns {
@@ -704,20 +708,46 @@ impl DeadlineInference {
         }
     }
 
-    /// Format relative deadline as human-readable string
+    /// Format relative deadline as tascli-compatible time string
     fn format_relative_deadline(seconds: i64, time_context: &TimeContext) -> String {
         let minutes = seconds / 60;
         let hours = seconds / 3600;
         let days = seconds / 86400;
 
+        // For days and longer, use +Xd format
         if days > 0 {
-            format!("{} days", days)
+            format!("+{}d", days)
         } else if hours > 0 {
-            format!("{} hours", hours)
+            // For hours, calculate the actual time and return HH:MM format
+            let future_timestamp = time_context.now() + seconds;
+            let future_datetime = chrono::DateTime::from_timestamp(future_timestamp, 0)
+                .unwrap()
+                .naive_local();
+            format!("{:02}:{:02}",
+                future_datetime.hour(),
+                future_datetime.minute()
+            )
         } else if minutes > 0 {
-            format!("{} minutes", minutes)
+            // For minutes, return time in "today HH:MM" format
+            let future_timestamp = time_context.now() + seconds;
+            let future_datetime = chrono::DateTime::from_timestamp(future_timestamp, 0)
+                .unwrap()
+                .naive_local();
+            format!("today {:02}:{:02}",
+                future_datetime.hour(),
+                future_datetime.minute()
+            )
         } else {
-            format!("{} seconds", seconds)
+            // For seconds, use "today HH:MM:SS" format
+            let future_timestamp = time_context.now() + seconds;
+            let future_datetime = chrono::DateTime::from_timestamp(future_timestamp, 0)
+                .unwrap()
+                .naive_local();
+            format!("today {:02}:{:02}:{:02}",
+                future_datetime.hour(),
+                future_datetime.minute(),
+                future_datetime.second()
+            )
         }
     }
 
@@ -1305,7 +1335,8 @@ mod tests {
         let result = DeadlineInference::infer_relative_deadline("complete in 2 hours", &context);
         assert!(result.is_some());
         let inferred = result.unwrap();
-        assert_eq!(inferred.deadline, "2 hours");
+        // Should be in HH:MM format (tascli-compatible)
+        assert!(inferred.deadline.contains(':'));
         assert_eq!(inferred.source, DeadlineSource::RelativeTime);
     }
 
@@ -1315,7 +1346,9 @@ mod tests {
         let result = DeadlineInference::infer_relative_deadline("finish in 30 minutes", &context);
         assert!(result.is_some());
         let inferred = result.unwrap();
-        assert_eq!(inferred.deadline, "30 minutes");
+        // Should be in "today HH:MM" format
+        assert!(inferred.deadline.starts_with("today "));
+        assert!(inferred.deadline.contains(':'));
     }
 
     #[test]
@@ -1324,7 +1357,8 @@ mod tests {
         let result = DeadlineInference::infer_relative_deadline("do it in 5 days", &context);
         assert!(result.is_some());
         let inferred = result.unwrap();
-        assert_eq!(inferred.deadline, "5 days");
+        // Should be in "+Xd" format for days
+        assert_eq!(inferred.deadline, "+5d");
     }
 
     #[test]
@@ -1333,7 +1367,8 @@ mod tests {
         let result = DeadlineInference::infer_relative_deadline("review in 1 week", &context);
         assert!(result.is_some());
         let inferred = result.unwrap();
-        assert_eq!(inferred.deadline, "7 days");
+        // Should be in "+Xd" format for weeks (7 days)
+        assert_eq!(inferred.deadline, "+7d");
     }
 
     #[test]
@@ -1342,7 +1377,8 @@ mod tests {
         let result = DeadlineInference::infer_relative_deadline("finish next week", &context);
         assert!(result.is_some());
         let inferred = result.unwrap();
-        assert_eq!(inferred.deadline, "7 days");
+        // Should be in "+Xd" format for "next week" (7 days)
+        assert_eq!(inferred.deadline, "+7d");
         assert_eq!(inferred.source, DeadlineSource::RelativeTime);
     }
 
@@ -1352,7 +1388,8 @@ mod tests {
         let result = DeadlineInference::infer_relative_deadline("start next month", &context);
         assert!(result.is_some());
         let inferred = result.unwrap();
-        assert_eq!(inferred.deadline, "30 days");
+        // Should be in "+Xd" format for "next month" (30 days)
+        assert_eq!(inferred.deadline, "+30d");
     }
 
     #[test]
@@ -1361,7 +1398,8 @@ mod tests {
         let result = DeadlineInference::infer_relative_deadline("plan next year", &context);
         assert!(result.is_some());
         let inferred = result.unwrap();
-        assert_eq!(inferred.deadline, "365 days");
+        // Should be in "+Xd" format for "next year" (365 days)
+        assert_eq!(inferred.deadline, "+365d");
     }
 
     #[test]
@@ -1525,25 +1563,39 @@ mod tests {
     #[test]
     fn test_format_relative_deadline_seconds() {
         let context = TimeContext::default();
-        assert_eq!(DeadlineInference::format_relative_deadline(30, &context), "30 seconds");
+        let result = DeadlineInference::format_relative_deadline(30, &context);
+        // Should be in format "today HH:MM:SS"
+        assert!(result.starts_with("today "));
+        // Parse the HH:MM:SS part
+        let time_part = &result[6..];
+        assert!(time_part.matches(':').count() == 2); // HH:MM:SS format
     }
 
     #[test]
     fn test_format_relative_deadline_minutes() {
         let context = TimeContext::default();
-        assert_eq!(DeadlineInference::format_relative_deadline(300, &context), "5 minutes");
+        let result = DeadlineInference::format_relative_deadline(300, &context);
+        // Should be in format "today HH:MM"
+        assert!(result.starts_with("today "));
+        // Parse the HH:MM part
+        let time_part = &result[6..];
+        assert!(time_part.matches(':').count() == 1); // HH:MM format
     }
 
     #[test]
     fn test_format_relative_deadline_hours() {
         let context = TimeContext::default();
-        assert_eq!(DeadlineInference::format_relative_deadline(7200, &context), "2 hours");
+        let result = DeadlineInference::format_relative_deadline(7200, &context);
+        // Should be in format "HH:MM" (without "today" prefix for hours)
+        assert!(result.matches(':').count() == 1); // HH:MM format
+        // Should NOT start with "today" for pure hour offsets
+        assert!(!result.starts_with("today "));
     }
 
     #[test]
     fn test_format_relative_deadline_days() {
         let context = TimeContext::default();
-        assert_eq!(DeadlineInference::format_relative_deadline(172800, &context), "2 days");
+        assert_eq!(DeadlineInference::format_relative_deadline(172800, &context), "+2d");
     }
 
     #[test]
@@ -1729,5 +1781,120 @@ mod tests {
         let result = DeadlineInference::infer_deadline("finish by tomorrow!", &context, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().deadline, "tomorrow");
+    }
+
+    // === Additional Relative Time Parsing Tests ===
+
+    #[test]
+    fn test_infer_deadline_in_10_minutes() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_deadline("task in 10 minutes", &context, None);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.source, DeadlineSource::RelativeTime);
+        assert!(inferred.is_explicit);
+        // Should be in "today HH:MM" format
+        assert!(inferred.deadline.starts_with("today "));
+    }
+
+    #[test]
+    fn test_infer_deadline_in_3_hours() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_deadline("call in 3 hours", &context, None);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.source, DeadlineSource::RelativeTime);
+        // Should be HH:MM format (no "today" prefix)
+        assert!(!inferred.deadline.starts_with("today "));
+        assert!(inferred.deadline.contains(':'));
+    }
+
+    #[test]
+    fn test_infer_deadline_in_14_days() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_deadline("task in 14 days", &context, None);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        // Should be in +Xd format
+        assert_eq!(inferred.deadline, "+14d");
+    }
+
+    #[test]
+    fn test_infer_deadline_next_monday() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_deadline("task next monday", &context, None);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.source, DeadlineSource::Explicit);
+        assert_eq!(inferred.deadline, "monday");
+    }
+
+    #[test]
+    fn test_infer_deadline_next_friday() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_deadline("deadline next friday", &context, None);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.source, DeadlineSource::Explicit);
+        assert_eq!(inferred.deadline, "friday");
+    }
+
+    #[test]
+    fn test_infer_deadline_case_variations() {
+        let context = TimeContext::default();
+
+        // Test "IN 2 HOURS" (uppercase)
+        let result = DeadlineInference::infer_deadline("task IN 2 HOURS", &context, None);
+        assert!(result.is_some());
+
+        // Test "In 5 Days" (mixed case)
+        let result = DeadlineInference::infer_deadline("In 5 Days", &context, None);
+        assert!(result.is_some());
+
+        // Test "next WEEK" (mixed case)
+        let result = DeadlineInference::infer_deadline("next WEEK", &context, None);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_infer_deadline_with_plural_units() {
+        let context = TimeContext::default();
+
+        // Test "in 1 day" (singular)
+        let result = DeadlineInference::infer_deadline("task in 1 day", &context, None);
+        assert!(result.is_some());
+
+        // Test "in 2 days" (plural)
+        let result = DeadlineInference::infer_deadline("task in 2 days", &context, None);
+        assert!(result.is_some());
+
+        // Test "in 1 week" (singular week)
+        let result = DeadlineInference::infer_deadline("task in 1 week", &context, None);
+        assert!(result.is_some());
+
+        // Test "in 2 weeks" (plural weeks)
+        let result = DeadlineInference::infer_deadline("task in 2 weeks", &context, None);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_format_relative_deadline_edge_cases() {
+        let context = TimeContext::default();
+
+        // Test 1 second (should still work)
+        let result = DeadlineInference::format_relative_deadline(1, &context);
+        assert!(result.starts_with("today "));
+
+        // Test 60 seconds exactly (1 minute)
+        let result = DeadlineInference::format_relative_deadline(60, &context);
+        assert!(result.starts_with("today "));
+
+        // Test 3600 seconds exactly (1 hour)
+        let result = DeadlineInference::format_relative_deadline(3600, &context);
+        assert!(result.contains(':'));
+
+        // Test 86400 seconds exactly (1 day)
+        let result = DeadlineInference::format_relative_deadline(86400, &context);
+        assert_eq!(result, "+1d");
     }
 }

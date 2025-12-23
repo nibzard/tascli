@@ -1283,3 +1283,115 @@ fn test_minimal_valid_delete() {
     let cmd = delete("a");
     assert!(CommandValidator::validate(&cmd).is_ok());
 }
+
+// === Relative Time Pattern Tests ===
+
+#[test]
+fn test_relative_time_in_minutes() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "quick call".to_string(),
+        deadline: Some("in 5 minutes".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_in_hours() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "meeting".to_string(),
+        deadline: Some("in 2 hours".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_in_days() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "project review".to_string(),
+        deadline: Some("in 7 days".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_next_week() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "sprint planning".to_string(),
+        deadline: Some("next week".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_next_month() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "quarterly review".to_string(),
+        deadline: Some("next month".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_next_year() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "annual planning".to_string(),
+        deadline: Some("next year".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_case_insensitive() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "reminder".to_string(),
+        deadline: Some("IN 30 MINUTES".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_mixed_case() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "follow up".to_string(),
+        deadline: Some("In 3 Hours".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_with_weekday() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "team sync".to_string(),
+        deadline: Some("next friday".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}
+
+#[test]
+fn test_relative_time_singular_units() {
+    let cmd = NLPCommand {
+        action: ActionType::Task,
+        content: "quick task".to_string(),
+        deadline: Some("in 1 hour".to_string()),
+        ..Default::default()
+    };
+    assert!(CommandValidator::validate(&cmd).is_ok());
+}

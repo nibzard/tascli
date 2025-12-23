@@ -144,7 +144,9 @@ Rules:
 1. Parse the user's intent into one of the actions: task, record, done, update, delete, list
 2. Extract relevant information like content, category, deadlines, schedules
 3. For time expressions, convert them to tascli's format:
-   - Relative times: "today", "tomorrow", "yesterday", "eom", "eoy"
+   - Relative dates: "today", "tomorrow", "yesterday", "eom", "eoy"
+   - Relative time offsets: "+7d" (7 days from now), "+30d" (30 days from now)
+   - Relative time in hours/minutes: extract the numeric value for later processing
    - Dates: "YYYY-MM-DD", "MM/DD", "MM/DD/YYYY"
    - Times: "HH:MM", "3PM", "3:00PM"
    - Recurring: "daily", "weekly Monday", "monthly 1st"
@@ -162,6 +164,9 @@ Rules:
 
 Examples:
 - "add a task for today to cleanup the trash" → action: "task", content: "cleanup the trash", deadline: "today"
+- "remind me in 2 hours" → action: "task", content: "remind me", deadline: "in 2 hours"
+- "task due in 5 days" → action: "task", content: "task", deadline: "in 5 days"
+- "schedule meeting next week" → action: "task", content: "meeting", deadline: "next week"
 - "show my work tasks" → action: "list", content: "tasks", category: "work"
 - "show all overdue work tasks" → action: "list", content: "tasks", category: "work", query_type: "overdue"
 - "what's due today?" → action: "list", content: "tasks", query_type: "due_today"
@@ -296,7 +301,9 @@ Rules:
 1. Parse the user's intent into one of the actions: task, record, done, update, delete, list
 2. Extract relevant information like content, category, deadlines, schedules
 3. For time expressions, convert them to tascli's format:
-   - Relative times: "today", "tomorrow", "yesterday", "eom", "eoy"
+   - Relative dates: "today", "tomorrow", "yesterday", "eom", "eoy"
+   - Relative time offsets: "+7d" (7 days from now), "+30d" (30 days from now)
+   - Relative time in hours/minutes: extract the numeric value for later processing
    - Dates: "YYYY-MM-DD", "MM/DD", "MM/DD/YYYY"
    - Times: "HH:MM", "3PM", "3:00PM"
    - Recurring: "daily", "weekly Monday", "monthly 1st"
@@ -338,6 +345,9 @@ Rules:
 
 Examples:
 - "add a task for today to cleanup the trash" → action: "task", content: "cleanup the trash", deadline: "today"
+- "remind me in 2 hours" → action: "task", content: "remind me", deadline: "in 2 hours"
+- "task due in 5 days" → action: "task", content: "task", deadline: "in 5 days"
+- "schedule meeting next week" → action: "task", content: "meeting", deadline: "next week"
 - "show my work tasks" → action: "list", content: "tasks", category: "work"
 - "show all overdue work tasks" → action: "list", content: "tasks", category: "work", query_type: "overdue"
 - "what's due today?" → action: "list", content: "tasks", query_type: "due_today"
