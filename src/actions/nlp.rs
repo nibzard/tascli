@@ -727,7 +727,59 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
         NLPConfigCommand::Help { topic } => {
             handle_nlp_help(topic.as_deref())
         },
+
+        NLPConfigCommand::Interactive { no_transparency, no_context } => {
+            handle_nlp_interactive(*no_transparency, *no_context)
+        },
     }
+}
+
+/// Handle NLP interactive mode
+fn handle_nlp_interactive(no_transparency: bool, no_context: bool) -> Result<(), String> {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+
+    rt.block_on(async {
+        // Get NLP configuration
+        let nlp_config = config::get_nlp_config()
+            .map_err(|e| format!("Failed to get NLP config: {}", e))?;
+
+        if !nlp_config.enabled {
+            return Err("NLP is disabled. Use 'tascli nlp config enable' to enable it.".to_string());
+        }
+
+        if nlp_config.api_key.is_none() {
+            return Err("OpenAI API key not configured. Use 'tascli nlp config set-key <api_key>' to set it.".to_string());
+        }
+
+        // Create parser
+        let parser = Arc::new(Mutex::new(NLPParser::new(nlp_config.clone())));
+
+        // Initialize personalization engine
+        let user_id = get_user_id();
+        if let Ok(personalization_db_path) = config::get_personalization_db_path() {
+            let _ = parser.lock().await.init_personalization(&personalization_db_path, user_id).await;
+        }
+
+        // Create interactive config
+        let interactive_config = crate::nlp::InteractiveConfig {
+            show_interpretation: !no_transparency,
+            show_context_on_start: !no_context,
+            ..Default::default()
+        };
+
+        // Create and run interactive mode
+        let mut interactive_mode = crate::nlp::create_interactive_mode(
+            parser,
+            Some(interactive_config),
+        );
+
+        interactive_mode.run().await
+            .map_err(|e| e.to_string())
+    })
 }
 
 /// Handle NLP help command

@@ -21,6 +21,7 @@ pub mod learning;
 pub mod personalization;
 pub mod transparency;
 pub mod help;
+pub mod interactive;
 
 pub use help::{
     HelpSystem,
@@ -132,4 +133,11 @@ pub use transparency::{
     show_compound_interpretation,
     show_interpretation_compact,
     format_interpretation,
+};
+pub use interactive::{
+    InteractiveMode,
+    InteractiveSession,
+    InteractiveResult,
+    InteractiveConfig,
+    create_interactive_mode,
 };

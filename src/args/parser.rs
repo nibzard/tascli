@@ -289,6 +289,15 @@ pub enum NLPConfigCommand {
         /// help topic (overview, queries, compound, conditions, examples, patterns, all)
         topic: Option<String>,
     },
+    /// enter interactive mode for multi-step natural language interactions
+    Interactive {
+        /// disable interpretation transparency in interactive mode
+        #[arg(short, long, default_value_t = false)]
+        no_transparency: bool,
+        /// disable context display on startup
+        #[arg(short, long, default_value_t = false)]
+        no_context: bool,
+    },
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {

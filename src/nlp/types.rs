@@ -29,6 +29,12 @@ impl fmt::Display for ActionType {
     }
 }
 
+impl Default for ActionType {
+    fn default() -> Self {
+        ActionType::List
+    }
+}
+
 /// Represents the different status options for items
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
