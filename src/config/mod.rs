@@ -54,6 +54,9 @@ pub struct NLPConfigSection {
     /// Whether to auto-confirm preview without asking
     #[nserde(default)]
     pub auto_confirm: bool,
+    /// Whether to show NLP interpretation transparency
+    #[nserde(default)]
+    pub show_transparency: bool,
 }
 
 impl Default for NLPConfigSection {
@@ -70,6 +73,7 @@ impl Default for NLPConfigSection {
             timeout_seconds: 30,
             preview_enabled: true,
             auto_confirm: false,
+            show_transparency: true,
         }
     }
 }
@@ -175,6 +179,7 @@ pub fn get_nlp_config() -> Result<crate::nlp::NLPConfig, String> {
         timeout_seconds: nlp_section.timeout_seconds,
         preview_enabled: nlp_section.preview_enabled,
         auto_confirm: nlp_section.auto_confirm,
+        show_transparency: nlp_section.show_transparency,
     })
 }
 
@@ -194,6 +199,7 @@ pub fn update_nlp_config(nlp_config: &crate::nlp::NLPConfig) -> Result<(), Strin
         timeout_seconds: nlp_config.timeout_seconds,
         preview_enabled: nlp_config.preview_enabled,
         auto_confirm: nlp_config.auto_confirm,
+        show_transparency: nlp_config.show_transparency,
     };
 
     save_config(&config)

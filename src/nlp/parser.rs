@@ -96,8 +96,11 @@ impl NLPParser {
     pub async fn parse(&self, input: &str) -> NLPResult<NLPCommand> {
         // Check personalization engine first for user-specific patterns
         let personalization = self.personalization_engine.lock().await;
-        if let Some(personalized_command) = personalization.get_personalized_command(input) {
+        if let Some(mut personalized_command) = personalization.get_personalized_command(input) {
             drop(personalization);
+            // Set transparency info for personalization
+            personalized_command.confidence = Some(0.98);
+            personalized_command.interpretation_source = Some("personalization".to_string());
             // Update context with personalized command
             let mut context_state = self.context.lock().await;
             context_state.add_command(personalized_command.clone(), input.to_string());
@@ -108,8 +111,11 @@ impl NLPParser {
 
         // Check learning engine for learned corrections
         let learning = self.learning_engine.lock().await;
-        if let Some(learned_command) = learning.apply_learning(input) {
+        if let Some(mut learned_command) = learning.apply_learning(input) {
             drop(learning);
+            // Set transparency info for learning
+            learned_command.confidence = Some(0.90);
+            learned_command.interpretation_source = Some("learning".to_string());
             // Update context with learned command
             let mut context_state = self.context.lock().await;
             context_state.add_command(learned_command.clone(), input.to_string());
@@ -143,6 +149,10 @@ impl NLPParser {
                             }
                         }
                     }
+
+                    // Set transparency info for pattern match
+                    command.confidence = Some(0.95);
+                    command.interpretation_source = Some("pattern".to_string());
 
                     // Update context and cache
                     let mut context_state = self.context.lock().await;
@@ -180,6 +190,14 @@ impl NLPParser {
             &conversation_summary,
             &known_categories,
         ).await?;
+
+        // Set transparency info for AI parsing
+        if command.confidence.is_none() {
+            command.confidence = Some(0.85);
+        }
+        if command.interpretation_source.is_none() {
+            command.interpretation_source = Some("ai".to_string());
+        }
 
         // Apply fuzzy matching for categories if needed
         if let Some(ref category) = command.category {
@@ -249,6 +267,15 @@ impl NLPParser {
             let description = CommandMapper::describe_command(&command);
             Ok((vec![command], description))
         }
+    }
+
+    /// Parse natural language input to multiple argument sets for compound commands
+    pub async fn parse_to_compound_args_with_transparency(&self, input: &str) -> NLPResult<(Vec<Vec<String>>, String, NLPCommand)> {
+        let command = self.parse(input).await?;
+        let all_args = CommandMapper::to_compound_args(&command);
+        let description = CommandMapper::describe_compound_command(&command);
+
+        Ok((all_args, description, command))
     }
 
     /// Parse natural language input to multiple argument sets for compound commands

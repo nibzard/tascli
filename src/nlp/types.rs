@@ -159,6 +159,10 @@ pub struct NLPCommand {
     pub compound_commands: Option<Vec<NLPCommand>>,
     /// Conditional execution for this command
     pub condition: Option<Condition>,
+    /// Confidence score for NLP interpretation (0.0 to 1.0)
+    pub confidence: Option<f64>,
+    /// Source of the command interpretation (pattern, ai, learning, personalization)
+    pub interpretation_source: Option<String>,
 }
 
 /// Represents a compound command with multiple operations
@@ -369,6 +373,8 @@ impl Default for NLPCommand {
             limit: None,
             compound_commands: None,
             condition: None,
+            confidence: None,
+            interpretation_source: None,
         }
     }
 }
@@ -444,6 +450,8 @@ pub struct NLPConfig {
     pub preview_enabled: bool,
     /// Whether to auto-confirm preview without asking
     pub auto_confirm: bool,
+    /// Whether to show NLP interpretation transparency
+    pub show_transparency: bool,
 }
 
 impl Default for NLPConfig {
@@ -460,6 +468,7 @@ impl Default for NLPConfig {
             timeout_seconds: 30,
             preview_enabled: true,
             auto_confirm: false,
+            show_transparency: true,
         }
     }
 }
@@ -643,6 +652,8 @@ mod tests {
         assert!(cmd.limit.is_none());
         assert!(cmd.compound_commands.is_none());
         assert!(cmd.condition.is_none());
+        assert!(cmd.confidence.is_none());
+        assert!(cmd.interpretation_source.is_none());
     }
 
     #[test]
@@ -679,6 +690,8 @@ mod tests {
             limit: Some(10),
             compound_commands: None,
             condition: None,
+            confidence: None,
+            interpretation_source: None,
         };
 
         assert_eq!(cmd.action, ActionType::Update);
@@ -935,6 +948,7 @@ mod tests {
         let config = NLPConfig {
             enabled: true,
             model: "gpt-4".to_string(),
+            show_transparency: true,
             ..Default::default()
         };
 

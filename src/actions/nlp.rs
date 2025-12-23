@@ -14,11 +14,12 @@ use crate::{
     nlp::{
         NLPParser, SequentialExecutor, CompoundExecutionMode,
         PreviewManager, commands_to_previews, ConfirmationResult,
-        SuggestionEngine, SuggestionRequest, PatternMatcher,
+        SuggestionEngine, SuggestionRequest,
         ErrorRecoveryEngine,
         LearningEngine, LearningStats, format_action,
         PersonalizationEngine, get_user_id,
         ActionType,
+        show_interpretation, show_compound_interpretation, show_interpretation_compact,
     },
 };
 
@@ -55,8 +56,17 @@ pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), Str
         }
 
         // Parse the natural language command, checking for compound commands
-        match parser.parse_to_compound_args(&cmd.description).await {
-            Ok((all_args, description)) => {
+        match parser.parse_to_compound_args_with_transparency(&cmd.description).await {
+            Ok((all_args, description, nlp_command)) => {
+                // Show interpretation transparency if enabled
+                if nlp_config.show_transparency {
+                    if all_args.len() > 1 {
+                        show_compound_interpretation(&cmd.description, &all_args, &description);
+                    } else {
+                        show_interpretation(&cmd.description, &nlp_command, &all_args[0]);
+                    }
+                }
+
                 // Check if this is a compound command
                 if all_args.len() > 1 {
                     // Handle compound command
@@ -294,6 +304,7 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
             println!("  API base URL: {}", nlp_config.api_base_url);
             println!("  Preview enabled: {}", nlp_config.preview_enabled);
             println!("  Auto-confirm: {}", nlp_config.auto_confirm);
+            println!("  Show transparency: {}", nlp_config.show_transparency);
 
             Ok(())
         },
@@ -694,6 +705,24 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
                 }
                 Err(e) => Err(format!("Failed to delete shortcut: {}", e)),
             }
+        },
+
+        NLPConfigCommand::EnableTransparency => {
+            let mut nlp_config = config::get_nlp_config()
+                .unwrap_or_default();
+            nlp_config.show_transparency = true;
+            config::update_nlp_config(&nlp_config)?;
+            print_green("NLP interpretation transparency enabled.");
+            Ok(())
+        },
+
+        NLPConfigCommand::DisableTransparency => {
+            let mut nlp_config = config::get_nlp_config()
+                .unwrap_or_default();
+            nlp_config.show_transparency = false;
+            config::update_nlp_config(&nlp_config)?;
+            print_green("NLP interpretation transparency disabled.");
+            Ok(())
         },
     }
 }

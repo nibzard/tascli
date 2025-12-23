@@ -544,6 +544,8 @@ mod tests {
             limit: Some(10),
             compound_commands: None,
             condition: None,
+            confidence: None,
+            interpretation_source: None,
         };
 
         cache.put("complex input", &command).unwrap();

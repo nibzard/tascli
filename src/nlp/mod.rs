@@ -19,6 +19,7 @@ pub mod suggestions;
 pub mod error_recovery;
 pub mod learning;
 pub mod personalization;
+pub mod transparency;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -117,4 +118,10 @@ pub use personalization::{
     PersonalizedPatternMatcher,
     PersonalizationStats,
     get_user_id,
+};
+pub use transparency::{
+    show_interpretation,
+    show_compound_interpretation,
+    show_interpretation_compact,
+    format_interpretation,
 };

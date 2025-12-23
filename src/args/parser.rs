@@ -280,6 +280,10 @@ pub enum NLPConfigCommand {
         /// Shortcut name to delete
         shortcut: String,
     },
+    /// enable NLP interpretation transparency
+    EnableTransparency,
+    /// disable NLP interpretation transparency
+    DisableTransparency,
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {
