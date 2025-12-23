@@ -5,6 +5,7 @@ use super::client::OpenAIClient;
 use super::mapper::CommandMapper;
 use super::validator::CommandValidator;
 use super::context::{CommandContext, FuzzyMatcher};
+use super::pattern_matcher::{PatternMatcher, PatternMatch};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ pub struct NLPParser {
     cache: Arc<Mutex<HashMap<String, (NLPCommand, std::time::Instant)>>>,
     config: NLPConfig,
     context: Arc<Mutex<CommandContext>>,
+    pattern_matcher_enabled: bool,
 }
 
 impl NLPParser {
@@ -23,12 +25,14 @@ impl NLPParser {
         let client = Arc::new(Mutex::new(OpenAIClient::new(config.clone())));
         let cache = Arc::new(Mutex::new(HashMap::new()));
         let context = Arc::new(Mutex::new(CommandContext::default()));
+        let pattern_matcher_enabled = true;
 
         Self {
             client,
             cache,
             config,
             context,
+            pattern_matcher_enabled,
         }
     }
 
@@ -37,12 +41,14 @@ impl NLPParser {
         let client = Arc::new(Mutex::new(OpenAIClient::new(config.clone())));
         let cache = Arc::new(Mutex::new(HashMap::new()));
         let context = Arc::new(Mutex::new(CommandContext::new(categories)));
+        let pattern_matcher_enabled = true;
 
         Self {
             client,
             cache,
             config,
             context,
+            pattern_matcher_enabled,
         }
     }
 
@@ -52,6 +58,45 @@ impl NLPParser {
         if self.config.cache_commands {
             if let Some(cached) = self.get_cached_command(input).await {
                 return Ok(cached);
+            }
+        }
+
+        // Try pattern matching first for simple commands (fast path)
+        if self.pattern_matcher_enabled {
+            match PatternMatcher::match_input(input) {
+                PatternMatch::Matched(mut command) => {
+                    // Apply fuzzy matching for categories if needed
+                    let context_state = self.context.lock().await;
+                    let known_categories = context_state.known_categories.clone();
+                    drop(context_state);
+
+                    if let Some(ref category) = command.category {
+                        if !known_categories.is_empty() &&
+                           !known_categories.contains(&category.to_lowercase()) &&
+                           !known_categories.iter().any(|c| c.eq_ignore_ascii_case(category)) {
+                            if let Some(fuzzy_match) = FuzzyMatcher::match_category(category, &known_categories) {
+                                command.category = Some(fuzzy_match);
+                            }
+                        }
+                    }
+
+                    // Update context and cache
+                    let mut context_state = self.context.lock().await;
+                    context_state.add_command(command.clone(), input.to_string());
+                    drop(context_state);
+
+                    if self.config.cache_commands {
+                        self.cache_command(input, command.clone()).await;
+                    }
+
+                    return Ok(command);
+                }
+                PatternMatch::Ambiguous(msg) => {
+                    return Err(NLPError::ValidationError(msg));
+                }
+                PatternMatch::NeedsAI => {
+                    // Fall through to AI processing
+                }
             }
         }
 

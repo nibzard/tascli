@@ -10,6 +10,7 @@ pub mod mapper;
 pub mod validator;
 pub mod types;
 pub mod context;
+pub mod pattern_matcher;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -27,3 +28,4 @@ pub use parser::NLPParser;
 pub use mapper::CommandMapper;
 pub use validator::CommandValidator;
 pub use context::{CommandContext, ContextualCommand, TimeContext, FuzzyMatcher, DeadlineInference, InferredDeadline, DisambiguationHelper};
+pub use pattern_matcher::{PatternMatcher, PatternMatch};
