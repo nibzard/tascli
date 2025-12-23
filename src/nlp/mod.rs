@@ -13,6 +13,7 @@ pub mod context;
 pub mod pattern_matcher;
 pub mod sequential;
 pub mod batching;
+pub mod conditional;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -49,4 +50,18 @@ pub use batching::{
     BatchType,
     BatchResult,
     BatchExecutionSummary,
+};
+
+// Conditional execution support
+pub use conditional::{
+    ConditionEvaluator,
+    ConditionalExecutor,
+    ConditionBuilder,
+    BranchExecutionResult,
+};
+pub use types::{
+    Condition,
+    ConditionExpression,
+    ComparisonOperator,
+    ConditionalBranch,
 };

@@ -1,6 +1,7 @@
 //! Sequential command execution with state management and error handling
 
 use super::types::*;
+use super::conditional::ConditionalExecutor;
 use rusqlite::Connection;
 
 /// Executor for sequential compound commands
@@ -45,6 +46,9 @@ impl SequentialExecutor {
             },
             CompoundExecutionMode::ContinueOnError => {
                 self.execute_continue_on_error(conn, commands)
+            },
+            CompoundExecutionMode::Conditional => {
+                self.execute_conditional(conn, commands)
             },
         }
     }
@@ -178,6 +182,71 @@ impl SequentialExecutor {
                     };
                     results.push(result);
                     return Ok(ExecutionSummary::new(commands.len(), results, context));
+                },
+            }
+        }
+
+        Ok(ExecutionSummary::new(commands.len(), results, context))
+    }
+
+    /// Execute commands with conditional logic
+    fn execute_conditional(
+        &self,
+        conn: &Connection,
+        commands: &[NLPCommand],
+    ) -> Result<ExecutionSummary, String> {
+        let mut context = SequentialContext::default();
+        let mut results = Vec::new();
+        let cond_executor = ConditionalExecutor::new(self.verbose);
+
+        for (index, command) in commands.iter().enumerate() {
+            if self.verbose {
+                println!("Evaluating command {}/{}...", index + 1, commands.len());
+            }
+
+            // Resolve context references first
+            let resolved_command = self.resolve_context(command, &context);
+
+            // Execute with conditional checking
+            match cond_executor.execute_conditional(conn, &resolved_command, &context) {
+                Ok(cond_result) => {
+                    if cond_result.skipped {
+                        // Command was skipped due to condition
+                        if self.verbose {
+                            println!("  -> Skipped (condition false)");
+                        }
+                        results.push(CommandExecutionResult {
+                            index,
+                            success: true,
+                            error: None,
+                            output: None,
+                        });
+                    } else if cond_result.executed {
+                        // Command was executed
+                        if let Some(output) = cond_result.output {
+                            context.update_with_result(&CommandExecutionResult {
+                                index,
+                                success: true,
+                                error: None,
+                                output: Some(output.clone()),
+                            });
+                            results.push(CommandExecutionResult {
+                                index,
+                                success: true,
+                                error: None,
+                                output: Some(output),
+                            });
+                        }
+                    }
+                },
+                Err(e) => {
+                    results.push(CommandExecutionResult {
+                        index,
+                        success: false,
+                        error: Some(e),
+                        output: None,
+                    });
+                    // Continue on error for conditional mode
                 },
             }
         }

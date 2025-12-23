@@ -51,6 +51,69 @@ pub enum QueryType {
     All,
 }
 
+/// Conditional expressions for conditional command execution
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Condition {
+    /// Single condition
+    Single(Box<ConditionExpression>),
+    /// Logical AND of conditions
+    And(Vec<Condition>),
+    /// Logical OR of conditions
+    Or(Vec<Condition>),
+    /// Logical NOT of condition
+    Not(Box<Condition>),
+}
+
+/// Individual condition expression
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConditionExpression {
+    /// Task exists with given content/pattern
+    TaskExists { content: String },
+    /// Task count matches criteria
+    TaskCount { operator: ComparisonOperator, value: i32 },
+    /// Category has tasks
+    CategoryHasTasks { category: String },
+    /// Category is empty
+    CategoryEmpty { category: String },
+    /// Previous command succeeded
+    PreviousSuccess,
+    /// Previous command failed
+    PreviousFailed,
+    /// Time-based condition
+    TimeCondition { operator: ComparisonOperator, hour: Option<i32>, minute: Option<i32> },
+    /// Day of week condition
+    DayOfWeek { days: Vec<String> },
+    /// Variable exists and equals value
+    VariableEquals { name: String, value: String },
+    /// Variable exists
+    VariableExists { name: String },
+}
+
+/// Comparison operators for conditions
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComparisonOperator {
+    Equal,
+    NotEqual,
+    GreaterThan,
+    LessThan,
+    GreaterOrEqual,
+    LessOrEqual,
+}
+
+/// Conditional branch for if-then-else execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConditionalBranch {
+    /// The condition to evaluate
+    pub condition: Condition,
+    /// Commands to execute if condition is true
+    pub then_commands: Vec<NLPCommand>,
+    /// Commands to execute if condition is false (optional)
+    pub else_commands: Option<Vec<NLPCommand>>,
+}
+
 /// Main structure for parsed natural language commands
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NLPCommand {
@@ -80,6 +143,8 @@ pub struct NLPCommand {
     pub limit: Option<i32>,
     /// For compound commands: additional commands to execute
     pub compound_commands: Option<Vec<NLPCommand>>,
+    /// Conditional execution for this command
+    pub condition: Option<Condition>,
 }
 
 /// Represents a compound command with multiple operations
@@ -107,6 +172,8 @@ pub enum CompoundExecutionMode {
     StopOnError,
     /// Continue on error, collect all results
     ContinueOnError,
+    /// Execute with conditional logic
+    Conditional,
 }
 
 /// Execution result for a single command in a compound sequence
@@ -287,6 +354,7 @@ impl Default for NLPCommand {
             days: None,
             limit: None,
             compound_commands: None,
+            condition: None,
         }
     }
 }
@@ -554,6 +622,7 @@ mod tests {
         assert!(cmd.days.is_none());
         assert!(cmd.limit.is_none());
         assert!(cmd.compound_commands.is_none());
+        assert!(cmd.condition.is_none());
     }
 
     #[test]
@@ -589,6 +658,7 @@ mod tests {
             days: Some(7),
             limit: Some(10),
             compound_commands: None,
+            condition: None,
         };
 
         assert_eq!(cmd.action, ActionType::Update);
@@ -602,6 +672,7 @@ mod tests {
         assert_eq!(cmd.modifications.len(), 1);
         assert_eq!(cmd.days, Some(7));
         assert_eq!(cmd.limit, Some(10));
+        assert!(cmd.condition.is_none());
     }
 
     #[test]

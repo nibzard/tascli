@@ -4,7 +4,8 @@
 //! that don't require full AI processing. This significantly reduces latency and
 //! API usage for frequently used commands.
 
-use super::types::{NLPCommand, ActionType, StatusType, QueryType};
+use super::types::{NLPCommand, ActionType, StatusType, QueryType, Condition, ConditionExpression, ComparisonOperator};
+use super::conditional::ConditionBuilder;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -116,6 +117,42 @@ static DATE_QUICK_RE: LazyLock<Regex> = LazyLock::new(|| {
 // "search for ...", "find ..."
 static SEARCH_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^search\s+(.+)$").unwrap()
+});
+
+// === Conditional Patterns ===
+// "if <category> has tasks then ...", "if category <category> is not empty then ..."
+static IF_CATEGORY_HAS_TASKS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^if\s+(\w+)\s+category\s+(?:has\s+tasks|is\s+not\s+empty)\s+then\s+(.+)$").unwrap()
+});
+
+// "if <category> is empty then ...", "if category <category> has no tasks then ..."
+static IF_CATEGORY_EMPTY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^if\s+(\w+)\s+category\s+(?:is\s+empty|has\s+no\s+tasks)\s+then\s+(.+)$").unwrap()
+});
+
+// "if task count is <operator> <number> then ..."
+static IF_TASK_COUNT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^if\s+task\s+count\s+is\s+(>=|<=|>|<|=|!=)\s+(\d+)\s+then\s+(.+)$").unwrap()
+});
+
+// "if today is ... then ..."
+static IF_DAY_OF_WEEK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^if\s+today\s+is\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|weekday)\s+then\s+(.+)$").unwrap()
+});
+
+// "if time is >= HH:MM then ..."
+static IF_TIME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^if\s+time\s+is\s+(>=|<=|>|<|=)\s+(\d{1,2}):(\d{2})\s+then\s+(.+)$").unwrap()
+});
+
+// "if previous succeeded then ..."
+static IF_PREVIOUS_SUCCESS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^if\s+previous\s+(?:command\s+)?succeeded\s+then\s+(.+)$").unwrap()
+});
+
+// "if previous failed then ..."
+static IF_PREVIOUS_FAILED_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^if\s+previous\s+(?:command\s+)?failed\s+then\s+(.+)$").unwrap()
 });
 
 impl PatternMatcher {
@@ -390,6 +427,141 @@ impl PatternMatcher {
             });
         }
 
+        // === Conditional Patterns ===
+        // Note: Complex conditionals may require AI processing for full accuracy
+
+        // "if <category> has tasks then ..." or "if <category> category is not empty then ..."
+        if let Some(caps) = IF_CATEGORY_HAS_TASKS_RE.captures(input) {
+            if let (Some(category), Some(then_command)) = (caps.get(1), caps.get(2)) {
+                let condition = ConditionBuilder::category_has_tasks(category.as_str());
+                let then_content = then_command.as_str().to_string();
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Task,
+                    content: then_content,
+                    condition: Some(condition),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // "if <category> is empty then ..." or "if <category> category has no tasks then ..."
+        if let Some(caps) = IF_CATEGORY_EMPTY_RE.captures(input) {
+            if let (Some(category), Some(then_command)) = (caps.get(1), caps.get(2)) {
+                let condition = ConditionBuilder::category_empty(category.as_str());
+                let then_content = then_command.as_str().to_string();
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Task,
+                    content: then_content,
+                    condition: Some(condition),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // "if task count is <operator> <number> then ..."
+        if let Some(caps) = IF_TASK_COUNT_RE.captures(input) {
+            if let (Some(op_str), Some(value_str), Some(then_command)) = (caps.get(1), caps.get(2), caps.get(3)) {
+                let operator = match op_str.as_str() {
+                    ">=" => ComparisonOperator::GreaterOrEqual,
+                    "<=" => ComparisonOperator::LessOrEqual,
+                    ">" => ComparisonOperator::GreaterThan,
+                    "<" => ComparisonOperator::LessThan,
+                    "=" | "==" => ComparisonOperator::Equal,
+                    "!=" => ComparisonOperator::NotEqual,
+                    _ => return PatternMatch::NeedsAI,
+                };
+                let value: i32 = value_str.as_str().parse().unwrap_or(0);
+                let condition = ConditionBuilder::task_count(operator, value);
+                let then_content = then_command.as_str().to_string();
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Task,
+                    content: then_content,
+                    condition: Some(condition),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // "if today is ... then ..."
+        if let Some(caps) = IF_DAY_OF_WEEK_RE.captures(input) {
+            if let (Some(day), Some(then_command)) = (caps.get(1), caps.get(2)) {
+                let days = match day.as_str().to_lowercase().as_str() {
+                    "monday" => vec!["Monday"],
+                    "tuesday" => vec!["Tuesday"],
+                    "wednesday" => vec!["Wednesday"],
+                    "thursday" => vec!["Thursday"],
+                    "friday" => vec!["Friday"],
+                    "saturday" => vec!["Saturday"],
+                    "sunday" => vec!["Sunday"],
+                    "weekend" => vec!["Saturday", "Sunday"],
+                    "weekday" => vec!["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+                    _ => return PatternMatch::NeedsAI,
+                };
+                let condition = ConditionBuilder::day_of_week(days);
+                let then_content = then_command.as_str().to_string();
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Task,
+                    content: then_content,
+                    condition: Some(condition),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // "if time is >= HH:MM then ..."
+        if let Some(caps) = IF_TIME_RE.captures(input) {
+            if let (Some(op_str), Some(hour_str), Some(minute_str), Some(then_command)) =
+                (caps.get(1), caps.get(2), caps.get(3), caps.get(4)) {
+                let operator = match op_str.as_str() {
+                    ">=" => ComparisonOperator::GreaterOrEqual,
+                    "<=" => ComparisonOperator::LessOrEqual,
+                    ">" => ComparisonOperator::GreaterThan,
+                    "<" => ComparisonOperator::LessThan,
+                    "=" | "==" => ComparisonOperator::Equal,
+                    "!=" => ComparisonOperator::NotEqual,
+                    _ => return PatternMatch::NeedsAI,
+                };
+                let hour: i32 = hour_str.as_str().parse().unwrap_or(0);
+                let minute: i32 = minute_str.as_str().parse().unwrap_or(0);
+                let condition = ConditionBuilder::time_condition(operator, Some(hour), Some(minute));
+                let then_content = then_command.as_str().to_string();
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Task,
+                    content: then_content,
+                    condition: Some(condition),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // "if previous succeeded then ..."
+        if let Some(caps) = IF_PREVIOUS_SUCCESS_RE.captures(input) {
+            if let Some(then_command) = caps.get(1) {
+                let condition = ConditionBuilder::previous_success();
+                let then_content = then_command.as_str().to_string();
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Task,
+                    content: then_content,
+                    condition: Some(condition),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // "if previous failed then ..."
+        if let Some(caps) = IF_PREVIOUS_FAILED_RE.captures(input) {
+            if let Some(then_command) = caps.get(1) {
+                let condition = ConditionBuilder::previous_failed();
+                let then_content = then_command.as_str().to_string();
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Task,
+                    content: then_content,
+                    condition: Some(condition),
+                    ..Default::default()
+                });
+            }
+        }
+
         // No pattern matched
         PatternMatch::NeedsAI
     }
@@ -430,12 +602,14 @@ impl PatternMatcher {
     /// Get statistics about pattern matching
     pub fn stats() -> PatternMatcherStats {
         PatternMatcherStats {
-            total_patterns: 18,
+            total_patterns: 26,
             patterns_checked: vec![
                 "add_task", "add_record", "complete", "delete", "list_all",
                 "list_records", "list_category", "list_status", "query_type",
                 "update", "help", "clear", "single_number", "simple_add",
-                "search", "priority", "date_quick", "set_category"
+                "search", "priority", "date_quick", "set_category",
+                "if_category_has_tasks", "if_category_empty", "if_task_count",
+                "if_day_of_week", "if_time", "if_previous_success", "if_previous_failed",
             ],
         }
     }

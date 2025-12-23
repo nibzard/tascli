@@ -543,6 +543,7 @@ mod tests {
             days: Some(7),
             limit: Some(10),
             compound_commands: None,
+            condition: None,
         };
 
         cache.put("complex input", &command).unwrap();

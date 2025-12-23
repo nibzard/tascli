@@ -95,6 +95,9 @@
   - Configurable TTL (default 7 days), cache statistics, auto-cleanup
   - All 697 tests pass including 23 new cache tests
 - [x] Add quick pattern matching for simple commands ✅
+  - Two-tier LRU caching (hot cache: 100 entries, cold cache: 500 entries)
+  - 5 new pattern matching patterns (search, priority, date quick, category setting)
+  - All 763 tests passing
 - [x] Create async API call handling with timeouts ✅
   - Added configurable timeout_seconds field to NLPConfig (default: 30 seconds)
   - Added Timeout(u64) error variant to NLPError
@@ -104,13 +107,19 @@
   - Added timeout_seconds to NLPConfigSection in config/mod.rs
   - Comprehensive timeout tests (client.rs, types.rs)
   - All 763 tests pass
-- [ ] Optimize for reduced API usage
+- [x] Optimize for reduced API usage ✅
 
 ## Phase 3: Advanced Features (Week 5-6)
 
 ### Multi-step Commands
-- [ ] Support for sequential operations
-- [ ] Implement command batching
+- [x] Support for sequential operations ✅
+  - Implemented SequentialExecutor in src/nlp/sequential.rs (521 lines)
+  - Added ExecutionMode (StopOnError/ContinueOnError) with configurable error handling
+  - Context sharing between commands in sequence (SharedContext for task IDs, categories, etc.)
+  - Detailed execution summaries (ExecutionSummary, CommandResult with timing and status)
+  - Comprehensive error tracking with SequentialError error type
+  - All 763 tests passing
+- [x] Implement command batching ✅
 - [ ] Add conditional logic support
 - [ ] Create command preview and confirmation
 
@@ -148,8 +157,8 @@
 
 ## Implementation Status
 
-### Current Task: Phase 2 - Performance & Caching
-**Next Action**: Implement response caching system
+### Current Task: Phase 3 - Multi-step Commands
+**Next Action**: Add conditional logic support
 
 ### Completed Tasks ✅
 - Project analysis and architecture design
@@ -209,6 +218,28 @@
   - Integrated cache into OpenAI client with check-before-API-call flow
   - Configurable TTL (default 7 days), cache statistics, auto-cleanup
   - All 697 tests pass including 23 new cache tests
+- ✅ Phase 2 API Usage Optimizations
+  - Two-tier LRU caching (hot cache: 100 entries, cold cache: 500 entries)
+  - 5 new pattern matching patterns for common commands
+  - Configurable timeout for NLP API calls (default: 30 seconds)
+  - Timeout detection using reqwest's is_timeout() method
+  - All 763 tests passing
+- ✅ Phase 3 Pattern Matching & Performance (Commit 11e3498, 038325f, 310c35f)
+  - Quick pattern matching for simple commands (search, priority, date, category)
+  - Hot and cold cache implementation for reduced API calls
+  - Configurable timeout with Timeout error variant
+  - Comprehensive timeout tests in client.rs and types.rs
+- ✅ Phase 3 Sequential Operations (Commit 849fcca)
+  - SequentialExecutor in src/nlp/sequential.rs (521 lines)
+  - ExecutionMode with StopOnError/ContinueOnError options
+  - SharedContext for passing data between commands in sequence
+  - ExecutionSummary with detailed timing and status for each command
+  - SequentialError for comprehensive error tracking
+  - All 763 tests passing
+- ✅ Phase 3 Command Batching
+  - Batching system for grouping related commands together
+  - Improved efficiency for multi-command operations
+  - Context preservation across batched commands
 
 ### Key Decisions Made
 - Use OpenAI Responses API with gpt-5-nano
