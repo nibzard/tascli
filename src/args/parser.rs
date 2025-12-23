@@ -284,6 +284,11 @@ pub enum NLPConfigCommand {
     EnableTransparency,
     /// disable NLP interpretation transparency
     DisableTransparency,
+    /// show help for natural language commands
+    Help {
+        /// help topic (overview, queries, compound, conditions, examples, patterns, all)
+        topic: Option<String>,
+    },
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {

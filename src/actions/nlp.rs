@@ -20,6 +20,7 @@ use crate::{
         PersonalizationEngine, get_user_id,
         ActionType,
         show_interpretation, show_compound_interpretation, show_interpretation_compact,
+        HelpSystem, HelpTopic,
     },
 };
 
@@ -97,11 +98,9 @@ pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), Str
                     Err(_) => Vec::new(),
                 };
 
-                // Generate and display recovery options
+                // Generate and display recovery options with help suggestions
                 let recovery_result = ErrorRecoveryEngine::handle_error(&e, &cmd.description, &available_categories);
-                ErrorRecoveryEngine::display_recovery(&recovery_result);
-
-                print_yellow("\nYou can also use traditional tascli commands or 'tascli nlp config patterns' to see available patterns.");
+                ErrorRecoveryEngine::display_recovery_with_help(&recovery_result, &cmd.description);
 
                 Err(e.to_string())
             }
@@ -724,6 +723,46 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
             print_green("NLP interpretation transparency disabled.");
             Ok(())
         },
+
+        NLPConfigCommand::Help { topic } => {
+            handle_nlp_help(topic.as_deref())
+        },
+    }
+}
+
+/// Handle NLP help command
+fn handle_nlp_help(topic: Option<&str>) -> Result<(), String> {
+    match topic {
+        None => {
+            // No topic specified, show overview and list topics
+            HelpSystem::show_overview();
+            println!();
+            HelpSystem::list_topics();
+            Ok(())
+        },
+        Some(topic_str) => {
+            match HelpTopic::from_str(topic_str) {
+                Some(help_topic) => {
+                    HelpSystem::show_help(help_topic);
+                    Ok(())
+                },
+                None => {
+                    // Topic not found, suggest similar topics
+                    print_yellow(&format!("Unknown help topic: '{}'", topic_str));
+                    println!();
+                    let suggestions = HelpSystem::suggest_topic(topic_str);
+                    if !suggestions.is_empty() {
+                        print_yellow("Did you mean one of these?");
+                        for suggestion in suggestions.iter().take(5) {
+                            println!("  tascli nlp help {}", suggestion);
+                        }
+                    }
+                    println!();
+                    HelpSystem::list_topics();
+                    Err(format!("Unknown help topic: '{}'", topic_str))
+                }
+            }
+        }
     }
 }
 

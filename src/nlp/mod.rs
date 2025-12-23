@@ -20,6 +20,14 @@ pub mod error_recovery;
 pub mod learning;
 pub mod personalization;
 pub mod transparency;
+pub mod help;
+
+pub use help::{
+    HelpSystem,
+    HelpTopic,
+    HelpSuggestion,
+    format_help_suggestions,
+};
 
 #[cfg(test)]
 mod mapper_tests;

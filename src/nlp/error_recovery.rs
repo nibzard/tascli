@@ -6,6 +6,7 @@
 
 use super::types::{NLPError, NLPCommand, Disambiguation, DisambiguationCandidate, AmbiguityType};
 use super::suggestions::{SuggestionEngine, SuggestionRequest, Suggestion};
+use super::help::{HelpSystem, format_help_suggestions};
 use crate::actions::display::{print_red, print_yellow, print_green};
 
 /// Category of error that occurred
@@ -205,6 +206,23 @@ impl ErrorRecoveryEngine {
             RecoveryResult::Unrecoverable(reason) => {
                 print_red(&format!("\nUnable to recover: {}", reason));
             }
+        }
+    }
+
+    /// Display recovery options with help suggestions
+    pub fn display_recovery_with_help(result: &RecoveryResult, input: &str) {
+        Self::display_recovery(result);
+
+        // Add contextual help suggestions
+        let help_suggestions = HelpSystem::suggest_for_input(input);
+        if !help_suggestions.is_empty() {
+            println!();
+            print_yellow("For more help, try:");
+            for suggestion in help_suggestions.iter().take(2) {
+                let topic_str = format!("{:?}", suggestion.topic).to_lowercase();
+                println!("  tascli nlp help {} - {}", topic_str, suggestion.reason);
+            }
+            println!("  tascli nlp help - List all help topics");
         }
     }
 

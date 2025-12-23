@@ -158,9 +158,14 @@
   - 21 unit tests
 
 ### Enhanced UX
-- [ ] Add transparency in command mapping
-- [ ] Show interpreted commands for verification
-- [ ] Implement help system for natural language
+- [x] Add transparency in command mapping ✅
+  - Implemented command transparency showing exact tascli commands executed
+  - Added `--show-commands` flag to display CLI command mapping
+  - Created `TransparencyReporter` for detailed command execution feedback
+  - Integrated with sequential executor for multi-step command visibility
+  - Users can now see exactly how NLP input translates to tascli CLI commands
+- [x] Show interpreted commands for verification ✅
+- [ ] Implement help system for natural language [READY TO START]
 - [ ] Add interactive mode for complex queries
 
 ## Phase 4: Integration & Polish (Week 7-8)
@@ -185,8 +190,8 @@
 
 ## Implementation Status
 
-### Current Task: Phase 3 - Multi-step Commands
-**Next Action**: Create command preview and confirmation
+### Current Task: Phase 3 - Enhanced UX
+**Next Action**: Implement help system for natural language
 
 ### Completed Tasks ✅
 - Project analysis and architecture design
@@ -283,6 +288,12 @@
   - CLI: personalization-status/reset/export, create/list/delete-shortcut
   - Integrated with NLP parser for automatic personalized pattern application
   - 21 unit tests
+- ✅ Phase 3 Command Mapping Transparency
+  - Implemented transparency showing exact tascli commands executed from NLP input
+  - Added `--show-commands` flag to display CLI command mapping
+  - Created `TransparencyReporter` for detailed command execution feedback
+  - Integrated with sequential executor for multi-step command visibility
+  - Users can see exactly how natural language translates to tascli CLI commands
 
 ### Key Decisions Made
 - Use OpenAI Responses API with gpt-5-nano

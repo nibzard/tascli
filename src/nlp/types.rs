@@ -783,6 +783,7 @@ mod tests {
             timeout_seconds: 45,
             preview_enabled: false,
             auto_confirm: true,
+            show_transparency: false,
         };
 
         assert!(config.enabled);
@@ -796,6 +797,7 @@ mod tests {
         assert_eq!(config.timeout_seconds, 45);
         assert!(!config.preview_enabled);
         assert!(config.auto_confirm);
+        assert!(!config.show_transparency);
     }
 
     // === NLPError Tests ===
@@ -959,7 +961,7 @@ mod tests {
 
     #[test]
     fn test_nlp_config_deserialize() {
-        let json = r#"{"enabled":true,"api_key":"sk-test","model":"gpt-4","fallback_to_traditional":false,"cache_commands":false,"context_window":5,"max_api_calls_per_minute":10,"api_base_url":"https://api.test.com","timeout_seconds":60,"preview_enabled":true,"auto_confirm":false}"#;
+        let json = r#"{"enabled":true,"api_key":"sk-test","model":"gpt-4","fallback_to_traditional":false,"cache_commands":false,"context_window":5,"max_api_calls_per_minute":10,"api_base_url":"https://api.test.com","timeout_seconds":60,"preview_enabled":true,"auto_confirm":false,"show_transparency":true}"#;
         let config: NLPConfig = serde_json::from_str(json).unwrap();
 
         assert!(config.enabled);
@@ -973,6 +975,7 @@ mod tests {
         assert_eq!(config.timeout_seconds, 60);
         assert!(config.preview_enabled);
         assert!(!config.auto_confirm);
+        assert!(config.show_transparency);
     }
 
     // === Edge Cases ===
