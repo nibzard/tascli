@@ -80,11 +80,21 @@
   - Enhanced system prompts with compound command examples
   - CommandMapper now handles sequential command execution
   - Allows users to chain operations like "add task X and list all tasks"
-- [ ] Create disambiguation for ambiguous inputs
+- [x] Create disambiguation for ambiguous inputs ✅
+  - Implemented interactive disambiguation dialog in src/nlp/disambiguate.rs
+  - Detects ambiguous task names, categories, and time references
+  - Presents options to user for clarification
+  - Integrates with NLPParser to request clarification before command execution
+  - Added 15 tests covering disambiguation scenarios
+  - All 636 tests passing
 
 ### Performance & Caching
-- [ ] Implement response caching system
-- [ ] Add quick pattern matching for simple commands
+- [x] Implement response caching system ✅
+  - Added persistent SQLite-based cache in src/nlp/cache.rs
+  - Integrated cache into OpenAI client with check-before-API-call flow
+  - Configurable TTL (default 7 days), cache statistics, auto-cleanup
+  - All 697 tests pass including 23 new cache tests
+- [x] Add quick pattern matching for simple commands ✅
 - [ ] Create async API call handling with timeouts
 - [ ] Optimize for reduced API usage
 
@@ -130,8 +140,8 @@
 
 ## Implementation Status
 
-### Current Task: Phase 2 - Advanced Parsing
-**Next Action**: Create disambiguation for ambiguous inputs
+### Current Task: Phase 2 - Performance & Caching
+**Next Action**: Implement response caching system
 
 ### Completed Tasks ✅
 - Project analysis and architecture design
@@ -172,6 +182,13 @@
   - Updated system prompts with relative time examples
   - 18 new tests (8 context.rs + 10 natural_language_patterns_tests.rs)
   - All 621 tests passing (Commit a2e708d)
+- ✅ Phase 2 Disambiguation System
+  - Interactive disambiguation dialog in src/nlp/disambiguate.rs
+  - Detects ambiguous task names, categories, and time references
+  - Presents options to user for clarification
+  - Integrates with NLPParser to request clarification before command execution
+  - 15 new tests covering disambiguation scenarios
+  - All 636 tests passing
 - ✅ Phase 2 Compound Command Support (Commit 52dbaac)
   - Implemented command chaining for multiple operations in single NLP input
   - Added CompoundCommand type to NLPCommand with commands vector
@@ -179,6 +196,11 @@
   - Enhanced system prompts with compound command examples
   - CommandMapper now handles sequential command execution
   - Allows users to chain operations like "add task X and list all tasks"
+- ✅ Phase 2 Response Caching System
+  - Added persistent SQLite-based cache in src/nlp/cache.rs
+  - Integrated cache into OpenAI client with check-before-API-call flow
+  - Configurable TTL (default 7 days), cache statistics, auto-cleanup
+  - All 697 tests pass including 23 new cache tests
 
 ### Key Decisions Made
 - Use OpenAI Responses API with gpt-5-nano

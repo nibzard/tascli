@@ -21,7 +21,7 @@ impl OpenAIClient {
     /// Create a new OpenAI client with the given configuration
     pub fn new(config: NLPConfig) -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(config.timeout_seconds))
             .build()
             .expect("Failed to create HTTP client");
 
@@ -303,7 +303,15 @@ Examples:
             .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                // Check if this is a timeout error
+                if e.is_timeout() {
+                    NLPError::Timeout(self.config.timeout_seconds)
+                } else {
+                    NLPError::NetworkError(e)
+                }
+            })?;
 
         if response.status() == 401 {
             return Err(NLPError::InvalidAPIKey);
@@ -313,7 +321,14 @@ Examples:
             return Err(NLPError::RateLimited);
         }
 
-        let response_text = response.text().await?;
+        let response_text = response.text().await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    NLPError::Timeout(self.config.timeout_seconds)
+                } else {
+                    NLPError::NetworkError(e)
+                }
+            })?;
         let response_json: Value = serde_json::from_str(&response_text)?;
 
         // Check for API errors
@@ -591,7 +606,15 @@ For follow-up commands, use context:
             .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                // Check if this is a timeout error
+                if e.is_timeout() {
+                    NLPError::Timeout(self.config.timeout_seconds)
+                } else {
+                    NLPError::NetworkError(e)
+                }
+            })?;
 
         if response.status() == 401 {
             return Err(NLPError::InvalidAPIKey);
@@ -601,7 +624,14 @@ For follow-up commands, use context:
             return Err(NLPError::RateLimited);
         }
 
-        let response_text = response.text().await?;
+        let response_text = response.text().await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    NLPError::Timeout(self.config.timeout_seconds)
+                } else {
+                    NLPError::NetworkError(e)
+                }
+            })?;
         let response_json: Value = serde_json::from_str(&response_text)?;
 
         // Check for API errors
@@ -976,7 +1006,7 @@ mod tests {
     }
 
     #[test]
-    fn test_client_custom_timeout() {
+    fn test_client_custom_timeout_deprecated() {
         // Client is created with a 30-second timeout
         // We can't directly test the timeout, but we can verify client creation works
         let config = make_test_config();
@@ -1033,5 +1063,64 @@ mod tests {
         assert!(result.is_ok());
         // The content is preserved as-is
         assert!(result.unwrap().content.contains("newlines"));
+    }
+
+    // === Timeout Configuration Tests ===
+
+    #[test]
+    fn test_client_default_timeout() {
+        let config = NLPConfig::default();
+        let client = OpenAIClient::new(config);
+        assert_eq!(client.config.timeout_seconds, 30);
+    }
+
+    #[test]
+    fn test_client_custom_timeout() {
+        let config = NLPConfig {
+            timeout_seconds: 60,
+            ..make_test_config()
+        };
+        let client = OpenAIClient::new(config);
+        assert_eq!(client.config.timeout_seconds, 60);
+    }
+
+    #[test]
+    fn test_client_very_short_timeout() {
+        let config = NLPConfig {
+            timeout_seconds: 1,
+            ..make_test_config()
+        };
+        let client = OpenAIClient::new(config);
+        assert_eq!(client.config.timeout_seconds, 1);
+    }
+
+    #[test]
+    fn test_client_timeout_config_persistence() {
+        let config = NLPConfig {
+            enabled: true,
+            timeout_seconds: 45,
+            ..make_test_config()
+        };
+        let client = OpenAIClient::new(config);
+        assert_eq!(client.config.timeout_seconds, 45);
+        assert_eq!(client.config.enabled, true);
+    }
+
+    // === Timeout Error Tests ===
+
+    #[test]
+    fn test_timeout_error_display() {
+        let err = NLPError::Timeout(30);
+        assert_eq!(err.to_string(), "Request timeout after 30 seconds");
+    }
+
+    #[test]
+    fn test_timeout_error_different_values() {
+        let err1 = NLPError::Timeout(10);
+        assert!(err1.to_string().contains("10"));
+        assert!(err1.to_string().contains("timeout"));
+
+        let err2 = NLPError::Timeout(120);
+        assert!(err2.to_string().contains("120"));
     }
 }

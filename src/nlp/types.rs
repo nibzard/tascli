@@ -228,6 +228,8 @@ pub struct NLPConfig {
     pub max_api_calls_per_minute: u32,
     /// API base URL (can be overridden for testing)
     pub api_base_url: String,
+    /// API request timeout in seconds (default: 30)
+    pub timeout_seconds: u64,
 }
 
 impl Default for NLPConfig {
@@ -241,6 +243,7 @@ impl Default for NLPConfig {
             context_window: 10,
             max_api_calls_per_minute: 20,
             api_base_url: "https://api.openai.com/v1".to_string(),
+            timeout_seconds: 30,
         }
     }
 }
@@ -274,6 +277,9 @@ pub enum NLPError {
 
     #[error("Configuration error: {0}")]
     ConfigError(String),
+
+    #[error("Request timeout after {0} seconds")]
+    Timeout(u64),
 }
 
 /// Disambiguation information for ambiguous inputs
@@ -515,6 +521,7 @@ mod tests {
         assert_eq!(config.context_window, 10);
         assert_eq!(config.max_api_calls_per_minute, 20);
         assert_eq!(config.api_base_url, "https://api.openai.com/v1");
+        assert_eq!(config.timeout_seconds, 30);
     }
 
     #[test]
@@ -541,6 +548,7 @@ mod tests {
             context_window: 20,
             max_api_calls_per_minute: 100,
             api_base_url: "https://custom.api.com/v1".to_string(),
+            timeout_seconds: 45,
         };
 
         assert!(config.enabled);
@@ -551,6 +559,7 @@ mod tests {
         assert_eq!(config.context_window, 20);
         assert_eq!(config.max_api_calls_per_minute, 100);
         assert_eq!(config.api_base_url, "https://custom.api.com/v1");
+        assert_eq!(config.timeout_seconds, 45);
     }
 
     // === NLPError Tests ===
@@ -713,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_nlp_config_deserialize() {
-        let json = r#"{"enabled":true,"api_key":"sk-test","model":"gpt-4","fallback_to_traditional":false,"cache_commands":false,"context_window":5,"max_api_calls_per_minute":10,"api_base_url":"https://api.test.com"}"#;
+        let json = r#"{"enabled":true,"api_key":"sk-test","model":"gpt-4","fallback_to_traditional":false,"cache_commands":false,"context_window":5,"max_api_calls_per_minute":10,"api_base_url":"https://api.test.com","timeout_seconds":60}"#;
         let config: NLPConfig = serde_json::from_str(json).unwrap();
 
         assert!(config.enabled);
@@ -724,6 +733,7 @@ mod tests {
         assert_eq!(config.context_window, 5);
         assert_eq!(config.max_api_calls_per_minute, 10);
         assert_eq!(config.api_base_url, "https://api.test.com");
+        assert_eq!(config.timeout_seconds, 60);
     }
 
     // === Edge Cases ===
@@ -791,6 +801,20 @@ mod tests {
     fn test_nlp_result_error_display() {
         let err = NLPError::APIError("Test error".to_string());
         assert_eq!(format!("{}", err), "API error: Test error");
+    }
+
+    #[test]
+    fn test_nlp_error_timeout() {
+        let err = NLPError::Timeout(30);
+        assert!(err.to_string().contains("timeout"));
+        assert!(err.to_string().contains("30"));
+        assert!(err.to_string().contains("seconds"));
+    }
+
+    #[test]
+    fn test_nlp_error_timeout_zero() {
+        let err = NLPError::Timeout(0);
+        assert_eq!(err.to_string(), "Request timeout after 0 seconds");
     }
 
     #[test]

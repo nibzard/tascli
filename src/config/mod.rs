@@ -45,6 +45,9 @@ pub struct NLPConfigSection {
     /// API base URL (can be overridden for testing)
     #[nserde(default)]
     pub api_base_url: String,
+    /// API request timeout in seconds (default: 30)
+    #[nserde(default)]
+    pub timeout_seconds: u64,
 }
 
 impl Default for NLPConfigSection {
@@ -58,6 +61,7 @@ impl Default for NLPConfigSection {
             context_window: 10,
             max_api_calls_per_minute: 20,
             api_base_url: "https://api.openai.com/v1".to_string(),
+            timeout_seconds: 30,
         }
     }
 }
@@ -160,6 +164,7 @@ pub fn get_nlp_config() -> Result<crate::nlp::NLPConfig, String> {
         context_window: nlp_section.context_window,
         max_api_calls_per_minute: nlp_section.max_api_calls_per_minute,
         api_base_url: nlp_section.api_base_url,
+        timeout_seconds: nlp_section.timeout_seconds,
     })
 }
 
@@ -176,6 +181,7 @@ pub fn update_nlp_config(nlp_config: &crate::nlp::NLPConfig) -> Result<(), Strin
         context_window: nlp_config.context_window,
         max_api_calls_per_minute: nlp_config.max_api_calls_per_minute,
         api_base_url: nlp_config.api_base_url.clone(),
+        timeout_seconds: nlp_config.timeout_seconds,
     };
 
     save_config(&config)
