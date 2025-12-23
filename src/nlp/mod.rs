@@ -14,6 +14,7 @@ pub mod pattern_matcher;
 pub mod sequential;
 pub mod batching;
 pub mod conditional;
+pub mod preview;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -64,4 +65,11 @@ pub use types::{
     ConditionExpression,
     ComparisonOperator,
     ConditionalBranch,
+};
+pub use preview::{
+    PreviewManager,
+    PreviewCommand,
+    PreviewFormatter,
+    ConfirmationResult,
+    commands_to_previews,
 };

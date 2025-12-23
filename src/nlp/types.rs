@@ -426,6 +426,10 @@ pub struct NLPConfig {
     pub api_base_url: String,
     /// API request timeout in seconds (default: 30)
     pub timeout_seconds: u64,
+    /// Whether to show preview before executing commands
+    pub preview_enabled: bool,
+    /// Whether to auto-confirm preview without asking
+    pub auto_confirm: bool,
 }
 
 impl Default for NLPConfig {
@@ -440,6 +444,8 @@ impl Default for NLPConfig {
             max_api_calls_per_minute: 20,
             api_base_url: "https://api.openai.com/v1".to_string(),
             timeout_seconds: 30,
+            preview_enabled: true,
+            auto_confirm: false,
         }
     }
 }
@@ -748,6 +754,8 @@ mod tests {
             max_api_calls_per_minute: 100,
             api_base_url: "https://custom.api.com/v1".to_string(),
             timeout_seconds: 45,
+            preview_enabled: false,
+            auto_confirm: true,
         };
 
         assert!(config.enabled);
@@ -759,6 +767,8 @@ mod tests {
         assert_eq!(config.max_api_calls_per_minute, 100);
         assert_eq!(config.api_base_url, "https://custom.api.com/v1");
         assert_eq!(config.timeout_seconds, 45);
+        assert!(!config.preview_enabled);
+        assert!(config.auto_confirm);
     }
 
     // === NLPError Tests ===

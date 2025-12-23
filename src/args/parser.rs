@@ -215,6 +215,14 @@ pub enum NLPConfigCommand {
     Show,
     /// clear NLP cache
     ClearCache,
+    /// enable preview mode
+    EnablePreview,
+    /// disable preview mode
+    DisablePreview,
+    /// enable auto-confirm (skip confirmation prompt)
+    EnableAutoConfirm,
+    /// disable auto-confirm
+    DisableAutoConfirm,
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {

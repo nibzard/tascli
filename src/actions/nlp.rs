@@ -11,7 +11,10 @@ use crate::{
         NLPConfigCommand,
     },
     config,
-    nlp::{NLPParser, SequentialExecutor, CompoundExecutionMode},
+    nlp::{
+        NLPParser, SequentialExecutor, CompoundExecutionMode,
+        PreviewManager, commands_to_previews, ConfirmationResult,
+    },
 };
 
 pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), String> {
@@ -46,30 +49,10 @@ pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), Str
                 // Check if this is a compound command
                 if all_args.len() > 1 {
                     // Handle compound command
-                    handle_compound_command(conn, &all_args, &description, cmd.show)
+                    handle_compound_command(conn, &all_args, &description, cmd.show, &nlp_config)
                 } else {
                     // Handle single command
-                    // Show the interpreted command if requested
-                    if cmd.show {
-                        print_green(&format!("Interpreted: {}", description));
-                        print_yellow(&format!("Command: {}", all_args[0].join(" ")));
-
-                        // Ask for confirmation
-                        print_yellow("Execute this command? [Y/n] ");
-
-                        let mut input = String::new();
-                        std::io::stdin().read_line(&mut input)
-                            .map_err(|e| format!("Failed to read input: {}", e))?;
-
-                        let input = input.trim().to_lowercase();
-                        if !input.is_empty() && input != "y" && input != "yes" {
-                            print_yellow("Command cancelled.");
-                            return Ok(());
-                        }
-                    }
-
-                    // Execute the interpreted command
-                    execute_parsed_command(conn, &all_args[0])
+                    handle_single_command(conn, &all_args[0], &description, cmd.show, &nlp_config)
                 }
             },
             Err(e) => {
@@ -81,40 +64,103 @@ pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), Str
     })
 }
 
+/// Handle single command with preview
+fn handle_single_command(
+    conn: &Connection,
+    args: &[String],
+    description: &str,
+    force_show: bool,
+    nlp_config: &crate::nlp::NLPConfig,
+) -> Result<(), String> {
+    // Create preview manager
+    let preview_enabled = force_show || nlp_config.preview_enabled;
+    let preview_manager = PreviewManager::new(preview_enabled, nlp_config.auto_confirm);
+
+    // Convert args to NLPCommand for preview
+    let nlp_cmd = convert_args_to_nlp_command(args);
+
+    // Create preview
+    let preview = crate::nlp::PreviewCommand::from_nlp_command(&nlp_cmd, 0);
+
+    // Show preview and get confirmation
+    match preview_manager.preview_command(&preview)? {
+        ConfirmationResult::Confirmed => {
+            execute_parsed_command(conn, args)
+        },
+        ConfirmationResult::Cancelled => {
+            print_yellow("Command cancelled.");
+            Ok(())
+        },
+        ConfirmationResult::Edit => {
+            print_yellow("Edit functionality not yet implemented. Command cancelled.");
+            Ok(())
+        },
+    }
+}
+
 /// Handle compound commands (multiple commands in one input)
 fn handle_compound_command(
     conn: &Connection,
     all_args: &[Vec<String>],
     description: &str,
-    show: bool,
+    force_show: bool,
+    nlp_config: &crate::nlp::NLPConfig,
 ) -> Result<(), String> {
-    print_green(&format!("Interpreted compound command: {}", description));
-
     // Convert args to NLPCommands for SequentialExecutor
-    // This is a simplified approach - in production we'd get the parsed commands directly
     let commands = convert_args_to_commands(all_args);
 
+    // Create preview manager
+    let preview_enabled = force_show || nlp_config.preview_enabled;
+    let preview_manager = PreviewManager::new(preview_enabled, nlp_config.auto_confirm);
+
+    // Create previews
+    let previews = commands_to_previews(&commands);
+
+    // Show preview and get confirmation
+    match preview_manager.preview_compound(&previews, &CompoundExecutionMode::ContinueOnError)? {
+        ConfirmationResult::Confirmed => {
+            // Execute the compound command
+            execute_compound_commands(conn, &commands, &preview_manager)
+        },
+        ConfirmationResult::Cancelled => {
+            print_yellow("Commands cancelled.");
+            Ok(())
+        },
+        ConfirmationResult::Edit => {
+            print_yellow("Edit functionality not yet implemented. Commands cancelled.");
+            Ok(())
+        },
+    }
+}
+
+/// Execute compound commands with summary
+fn execute_compound_commands(
+    conn: &Connection,
+    commands: &[crate::nlp::NLPCommand],
+    preview_manager: &PreviewManager,
+) -> Result<(), String> {
     // Create executor
     let executor = SequentialExecutor::new(false, true); // Continue on error, verbose
-
-    // Execute with preview
     let execution_mode = CompoundExecutionMode::ContinueOnError;
 
-    match executor.execute_compound(conn, &commands, &execution_mode, show) {
+    // Disable internal preview since we already showed it
+    let result = executor.execute_compound(conn, commands, &execution_mode, false);
+
+    match result {
         Ok(summary) => {
             // Print detailed results
-            for result in &summary.results {
-                if result.success {
-                    print_green(&format!("Command {}: Success", result.index + 1));
+            for res in &summary.results {
+                if res.success {
+                    print_green(&format!("Command {}: Success", res.index + 1));
                 } else {
                     print_red(&format!("Command {}: Failed - {}",
-                        result.index + 1,
-                        result.error.as_deref().unwrap_or("Unknown error")));
+                        res.index + 1,
+                        res.error.as_deref().unwrap_or("Unknown error")));
                 }
             }
 
-            // Print summary
-            print_green(&format!("\n{}", summary.to_summary_string()));
+            // Print summary using preview manager
+            preview_manager.show_summary(summary.total, summary.successful, summary.failed);
 
             if !summary.is_complete_success() {
                 print_yellow("\nSome commands failed. You can retry failed commands individually.");
@@ -122,50 +168,46 @@ fn handle_compound_command(
 
             Ok(())
         },
-        Err(e) => {
-            if e == "Commands cancelled by user." {
-                print_yellow("Commands cancelled.");
-                Ok(())
-            } else {
-                Err(e)
-            }
-        }
+        Err(e) => Err(e),
     }
 }
 
 /// Convert CLI args back to NLPCommands (simplified for compatibility)
 fn convert_args_to_commands(all_args: &[Vec<String>]) -> Vec<crate::nlp::NLPCommand> {
+    all_args.iter().map(|args| convert_args_to_nlp_command(args)).collect()
+}
+
+/// Convert a single CLI args to NLPCommand
+fn convert_args_to_nlp_command(args: &[String]) -> crate::nlp::NLPCommand {
     use crate::nlp::{NLPCommand, ActionType};
 
-    all_args.iter().map(|args| {
-        let action = if args.first().map_or(false, |a| a == "task") {
-            ActionType::Task
-        } else if args.first().map_or(false, |a| a == "done") {
-            ActionType::Done
-        } else if args.first().map_or(false, |a| a == "update") {
-            ActionType::Update
-        } else if args.first().map_or(false, |a| a == "delete") {
-            ActionType::Delete
-        } else if args.first().map_or(false, |a| a == "record") {
-            ActionType::Record
-        } else {
-            ActionType::List
-        };
+    let action = if args.first().map_or(false, |a| a == "task") {
+        ActionType::Task
+    } else if args.first().map_or(false, |a| a == "done") {
+        ActionType::Done
+    } else if args.first().map_or(false, |a| a == "update") {
+        ActionType::Update
+    } else if args.first().map_or(false, |a| a == "delete") {
+        ActionType::Delete
+    } else if args.first().map_or(false, |a| a == "record") {
+        ActionType::Record
+    } else {
+        ActionType::List
+    };
 
-        // Extract content from args (simplified)
-        let content = args.get(1).cloned().unwrap_or_default();
-        let category = args.iter()
-            .position(|a| a == "-c")
-            .and_then(|i| args.get(i + 1))
-            .cloned();
+    // Extract content from args (simplified)
+    let content = args.get(1).cloned().unwrap_or_default();
+    let category = args.iter()
+        .position(|a| a == "-c")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
 
-        NLPCommand {
-            action,
-            content,
-            category,
-            ..Default::default()
-        }
-    }).collect()
+    NLPCommand {
+        action,
+        content,
+        category,
+        ..Default::default()
+    }
 }
 
 fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
@@ -215,6 +257,8 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
             println!("  Context window: {}", nlp_config.context_window);
             println!("  Max API calls/minute: {}", nlp_config.max_api_calls_per_minute);
             println!("  API base URL: {}", nlp_config.api_base_url);
+            println!("  Preview enabled: {}", nlp_config.preview_enabled);
+            println!("  Auto-confirm: {}", nlp_config.auto_confirm);
 
             Ok(())
         },
@@ -222,6 +266,42 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
         NLPConfigCommand::ClearCache => {
             // This would need to be implemented to clear the cache
             print_green("NLP cache cleared.");
+            Ok(())
+        },
+
+        NLPConfigCommand::EnablePreview => {
+            let mut nlp_config = config::get_nlp_config()
+                .unwrap_or_default();
+            nlp_config.preview_enabled = true;
+            config::update_nlp_config(&nlp_config)?;
+            print_green("Preview mode enabled. You'll see command previews before execution.");
+            Ok(())
+        },
+
+        NLPConfigCommand::DisablePreview => {
+            let mut nlp_config = config::get_nlp_config()
+                .unwrap_or_default();
+            nlp_config.preview_enabled = false;
+            config::update_nlp_config(&nlp_config)?;
+            print_green("Preview mode disabled. Commands will execute immediately.");
+            Ok(())
+        },
+
+        NLPConfigCommand::EnableAutoConfirm => {
+            let mut nlp_config = config::get_nlp_config()
+                .unwrap_or_default();
+            nlp_config.auto_confirm = true;
+            config::update_nlp_config(&nlp_config)?;
+            print_green("Auto-confirm enabled. Preview will be shown but commands execute automatically.");
+            Ok(())
+        },
+
+        NLPConfigCommand::DisableAutoConfirm => {
+            let mut nlp_config = config::get_nlp_config()
+                .unwrap_or_default();
+            nlp_config.auto_confirm = false;
+            config::update_nlp_config(&nlp_config)?;
+            print_green("Auto-confirm disabled. You'll be prompted before execution.");
             Ok(())
         },
     }
