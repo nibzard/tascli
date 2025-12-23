@@ -15,6 +15,7 @@ pub mod sequential;
 pub mod batching;
 pub mod conditional;
 pub mod preview;
+pub mod suggestions;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -72,4 +73,12 @@ pub use preview::{
     PreviewFormatter,
     ConfirmationResult,
     commands_to_previews,
+};
+pub use suggestions::{
+    Suggestion,
+    SuggestionType,
+    SuggestionRequest,
+    SuggestionResult,
+    SuggestionEngine,
+    AutoCompleter,
 };

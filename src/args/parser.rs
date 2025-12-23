@@ -223,6 +223,13 @@ pub enum NLPConfigCommand {
     EnableAutoConfirm,
     /// disable auto-confirm
     DisableAutoConfirm,
+    /// show suggestions for natural language input
+    Suggest {
+        /// partial input to get suggestions for
+        input: String,
+    },
+    /// show available command patterns
+    Patterns,
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {

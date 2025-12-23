@@ -14,6 +14,7 @@ use crate::{
     nlp::{
         NLPParser, SequentialExecutor, CompoundExecutionMode,
         PreviewManager, commands_to_previews, ConfirmationResult,
+        SuggestionEngine, SuggestionRequest, PatternMatcher,
     },
 };
 
@@ -302,6 +303,48 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
             nlp_config.auto_confirm = false;
             config::update_nlp_config(&nlp_config)?;
             print_green("Auto-confirm disabled. You'll be prompted before execution.");
+            Ok(())
+        },
+
+        NLPConfigCommand::Suggest { input } => {
+            // Get suggestions for the input
+            let request = SuggestionRequest {
+                input: input.clone(),
+                cursor_position: input.len(),
+                recent_commands: Vec::new(),
+                available_categories: Vec::new(),
+            };
+
+            let result = SuggestionEngine::suggest(&request);
+
+            // Show validation status
+            if result.is_valid {
+                print_green(&format!("✓ Valid command: '{}'", input));
+            } else {
+                print_yellow(&format!("⚠ Partial or invalid command: '{}'", input));
+            }
+
+            // Show suggestions
+            println!();
+            print!("{}", SuggestionEngine::format_suggestions(&result.suggestions));
+
+            Ok(())
+        },
+
+        NLPConfigCommand::Patterns => {
+            let patterns = SuggestionEngine::command_patterns();
+
+            println!("Available Natural Language Command Patterns:");
+            println!("===========================================");
+            println!();
+
+            for (pattern, description) in patterns {
+                println!("  {:30} - {}", pattern, description);
+            }
+
+            println!();
+            print_yellow("Use 'tascli nlp config suggest <partial-input>' to get suggestions for your input.");
+
             Ok(())
         },
     }
