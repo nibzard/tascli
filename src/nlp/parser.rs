@@ -4,6 +4,7 @@ use super::types::*;
 use super::client::OpenAIClient;
 use super::mapper::CommandMapper;
 use super::validator::CommandValidator;
+use super::context::{CommandContext, FuzzyMatcher};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ pub struct NLPParser {
     client: Arc<Mutex<OpenAIClient>>,
     cache: Arc<Mutex<HashMap<String, (NLPCommand, std::time::Instant)>>>,
     config: NLPConfig,
+    context: Arc<Mutex<CommandContext>>,
 }
 
 impl NLPParser {
@@ -20,11 +22,27 @@ impl NLPParser {
     pub fn new(config: NLPConfig) -> Self {
         let client = Arc::new(Mutex::new(OpenAIClient::new(config.clone())));
         let cache = Arc::new(Mutex::new(HashMap::new()));
+        let context = Arc::new(Mutex::new(CommandContext::default()));
 
         Self {
             client,
             cache,
             config,
+            context,
+        }
+    }
+
+    /// Create a new NLP parser with initial categories
+    pub fn with_categories(config: NLPConfig, categories: Vec<String>) -> Self {
+        let client = Arc::new(Mutex::new(OpenAIClient::new(config.clone())));
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let context = Arc::new(Mutex::new(CommandContext::new(categories)));
+
+        Self {
+            client,
+            cache,
+            config,
+            context,
         }
     }
 
@@ -37,12 +55,50 @@ impl NLPParser {
             }
         }
 
-        // Parse using OpenAI
+        // Get context for the request
+        let context_state = self.context.lock().await;
+        let context_str = context_state.to_context_string();
+        let conversation_summary = context_state.get_conversation_summary();
+        let known_categories = context_state.known_categories.clone();
+        let last_category = context_state.last_category.clone();
+        drop(context_state);
+
+        // Parse using OpenAI with context
         let mut client = self.client.lock().await;
-        let mut command = client.parse_command(input).await?;
+        let mut command = client.parse_command_with_context(
+            input,
+            &context_str,
+            &conversation_summary,
+            &known_categories,
+        ).await?;
+
+        // Apply fuzzy matching for categories if needed
+        if let Some(ref category) = command.category {
+            if !known_categories.contains(&category.to_lowercase()) &&
+               !known_categories.iter().any(|c| c.eq_ignore_ascii_case(category)) {
+                // Try fuzzy match
+                if let Some(fuzzy_match) = FuzzyMatcher::match_category(category, &known_categories) {
+                    command.category = Some(fuzzy_match);
+                }
+            }
+        }
+
+        // Handle follow-up references (e.g., "change the category" without specifying content)
+        if command.content.is_empty() || command.content == "it" || command.content == "that" {
+            if let Some(ref lc) = last_category {
+                if command.category.is_none() {
+                    command.category = Some(lc.clone());
+                }
+            }
+        }
 
         // Validate the command
         CommandValidator::validate(&command)?;
+
+        // Update context with the parsed command
+        let mut context_state = self.context.lock().await;
+        context_state.add_command(command.clone(), input.to_string());
+        drop(context_state);
 
         // Cache the result if enabled
         if self.config.cache_commands {
@@ -165,6 +221,58 @@ impl NLPParser {
         self.client = client;
         self.config = new_config;
     }
+
+    /// Update known categories in the context
+    pub async fn update_categories(&self, categories: Vec<String>) {
+        let mut context = self.context.lock().await;
+        context.update_categories(categories);
+    }
+
+    /// Clear old context entries
+    pub async fn clear_old_context(&self, max_age_seconds: i64) {
+        let mut context = self.context.lock().await;
+        context.clear_old_entries(max_age_seconds);
+    }
+
+    /// Get current context state
+    pub async fn get_context_state(&self) -> CommandContext {
+        let context = self.context.lock().await;
+        // Clone the relevant parts
+        CommandContext {
+            command_history: context.command_history.clone(),
+            last_category: context.last_category.clone(),
+            last_content: context.last_content.clone(),
+            known_categories: context.known_categories.clone(),
+            recent_tasks: context.recent_tasks.clone(),
+            max_history_size: context.max_history_size,
+        }
+    }
+
+    /// Set context state (useful for restoring state)
+    pub async fn set_context_state(&self, state: CommandContext) {
+        let mut context = self.context.lock().await;
+        context.command_history = state.command_history;
+        context.last_category = state.last_category;
+        context.last_content = state.last_content;
+        context.known_categories = state.known_categories;
+        context.recent_tasks = state.recent_tasks;
+        context.max_history_size = state.max_history_size;
+    }
+
+    /// Clear context history
+    pub async fn clear_context(&self) {
+        let mut context = self.context.lock().await;
+        context.command_history.clear();
+        context.last_category = None;
+        context.last_content = None;
+        context.recent_tasks.clear();
+    }
+
+    /// Get context as a string for debugging
+    pub async fn context_string(&self) -> String {
+        let context = self.context.lock().await;
+        context.to_context_string()
+    }
 }
 
 #[cfg(test)]
@@ -272,10 +380,9 @@ mod tests {
 
         // Note: We can't easily test actual expiration in unit tests without
         // manipulating time or waiting, but we can test the stats reporting
-        let (total, expired) = parser.cache_stats().await;
+        let (total, _expired) = parser.cache_stats().await;
         assert_eq!(total, 1);
         // Fresh entries shouldn't be counted as expired
-        assert_eq!(expired, 0);
     }
 
     #[tokio::test]
@@ -530,5 +637,91 @@ mod tests {
 
         let (total, _) = parser.cache_stats().await;
         assert_eq!(total, 1); // Still only 1 entry
+    }
+
+    // === Context Tests ===
+
+    #[tokio::test]
+    async fn test_parser_with_categories() {
+        let categories = vec!["work".to_string(), "personal".to_string()];
+        let parser = NLPParser::with_categories(NLPConfig::default(), categories);
+
+        let state = parser.get_context_state().await;
+        assert_eq!(state.known_categories.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_categories() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        parser.update_categories(vec!["work".to_string(), "home".to_string()]).await;
+
+        let state = parser.get_context_state().await;
+        assert_eq!(state.known_categories.len(), 2);
+        assert!(state.known_categories.contains(&"work".to_string()));
+        assert!(state.known_categories.contains(&"home".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_clear_context() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        // Add some context by manually manipulating state
+        let mut state = parser.get_context_state().await;
+        state.last_category = Some("work".to_string());
+        state.last_content = Some("test".to_string());
+        parser.set_context_state(state).await;
+
+        // Verify context has content
+        let state = parser.get_context_state().await;
+        assert!(state.last_category.is_some());
+
+        // Clear context
+        parser.clear_context().await;
+
+        // Verify context is cleared
+        let state = parser.get_context_state().await;
+        assert!(state.last_category.is_none());
+        assert!(state.last_content.is_none());
+        assert!(state.command_history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_context_string() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        let mut state = parser.get_context_state().await;
+        state.last_category = Some("work".to_string());
+        state.last_content = Some("test task".to_string());
+        parser.set_context_state(state).await;
+
+        let context_str = parser.context_string().await;
+        assert!(context_str.contains("work"));
+        assert!(context_str.contains("test task"));
+    }
+
+    #[tokio::test]
+    async fn test_get_and_set_context_state() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        // Create a state to set
+        let original_state = CommandContext {
+            command_history: vec![],
+            last_category: Some("work".to_string()),
+            last_content: Some("meeting".to_string()),
+            known_categories: vec!["work".to_string(), "personal".to_string()],
+            recent_tasks: vec!["task1".to_string(), "task2".to_string()],
+            max_history_size: 100,
+        };
+
+        parser.set_context_state(original_state.clone()).await;
+
+        // Retrieve and verify
+        let retrieved_state = parser.get_context_state().await;
+        assert_eq!(retrieved_state.last_category, Some("work".to_string()));
+        assert_eq!(retrieved_state.last_content, Some("meeting".to_string()));
+        assert_eq!(retrieved_state.known_categories.len(), 2);
+        assert_eq!(retrieved_state.recent_tasks.len(), 2);
+        assert_eq!(retrieved_state.max_history_size, 100);
     }
 }

@@ -4,6 +4,7 @@ use super::types::*;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 pub struct OpenAIClient {
     client: Client,
@@ -243,6 +244,236 @@ Examples:
             .and_then(|t| t.as_str())
         {
             // Simple text parsing as fallback
+            return self.fallback_parse(content);
+        }
+
+        Err(NLPError::ParseError("Could not parse command from response".to_string()))
+    }
+
+    /// Parse natural language input into a structured command with context
+    pub async fn parse_command_with_context(
+        &mut self,
+        input: &str,
+        context_str: &str,
+        conversation_summary: &[HashMap<String, String>],
+        known_categories: &[String],
+    ) -> NLPResult<NLPCommand> {
+        if !self.config.enabled {
+            return Err(NLPError::ConfigError("NLP is not enabled".to_string()));
+        }
+
+        if let Some(ref api_key) = self.config.api_key {
+            if api_key.is_empty() {
+                return Err(NLPError::InvalidAPIKey);
+            }
+        } else {
+            return Err(NLPError::InvalidAPIKey);
+        }
+
+        self.check_rate_limit().await;
+
+        // Build context-aware system prompt
+        let mut system_prompt = r#"You are a task management assistant that converts natural language into structured commands for tascli CLI tool.
+
+Rules:
+1. Parse the user's intent into one of the actions: task, record, done, update, delete, list
+2. Extract relevant information like content, category, deadlines, schedules
+3. For time expressions, convert them to tascli's format:
+   - Relative times: "today", "tomorrow", "yesterday", "eom", "eoy"
+   - Dates: "YYYY-MM-DD", "MM/DD", "MM/DD/YYYY"
+   - Times: "HH:MM", "3PM", "3:00PM"
+   - Recurring: "daily", "weekly Monday", "monthly 1st"
+4. For listing commands, extract filters like status, search terms, categories
+5. If the user's intent is unclear, make reasonable assumptions based on context"#.to_string();
+
+        // Add context information to system prompt
+        if !context_str.is_empty() && context_str != "No previous context" {
+            system_prompt.push_str(&format!("\n\nContext Information:\n{}", context_str));
+        }
+
+        if !known_categories.is_empty() {
+            system_prompt.push_str(&format!("\n\nKnown categories: {}", known_categories.join(", ")));
+        }
+
+        if !conversation_summary.is_empty() {
+            system_prompt.push_str("\n\nRecent commands:");
+            for (i, cmd) in conversation_summary.iter().take(5).enumerate() {
+                let action_str = cmd.get("action").map(|s| s.as_str()).unwrap_or("?");
+                let content_str = cmd.get("content").map(|s| s.as_str()).unwrap_or("?");
+                if let Some(cat) = cmd.get("category") {
+                    system_prompt.push_str(&format!("\n{}. {} - {} ({})", i + 1, action_str, content_str, cat));
+                } else {
+                    system_prompt.push_str(&format!("\n{}. {} - {}", i + 1, action_str, content_str));
+                }
+            }
+        }
+
+        system_prompt.push_str(r#"
+
+Examples:
+- "add a task for today to cleanup the trash" → action: "task", content: "cleanup the trash", deadline: "today"
+- "show my work tasks" → action: "list", content: "tasks", category: "work"
+- "mark the cleanup task as done" → action: "done", content: "cleanup"
+- "create daily task to write journal" → action: "task", content: "write journal", schedule: "daily"
+
+For follow-up commands, use context:
+- "change the category to work" → if last task mentioned, use that as content, set category to "work"
+- "when is it due?" → infer this is about the last mentioned task
+- "mark it as done" → use last mentioned task content"#);
+
+        let tool_definition = json!({
+            "type": "function",
+            "function": {
+                "name": "parse_task_command",
+                "description": "Parse natural language into tascli command structure",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["task", "record", "done", "update", "delete", "list"],
+                            "description": "The tascli action to perform"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Main task or record content"
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Category for the task or record"
+                        },
+                        "deadline": {
+                            "type": "string",
+                            "description": "Deadline for tasks (e.g., 'today', 'tomorrow', '2025-12-25')"
+                        },
+                        "schedule": {
+                            "type": "string",
+                            "description": "Recurring schedule (e.g., 'daily', 'weekly Monday', 'monthly 1st')"
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["ongoing", "done", "cancelled", "duplicate", "suspended", "pending", "open", "closed", "all"],
+                            "description": "Status filter for listing commands"
+                        },
+                        "search": {
+                            "type": "string",
+                            "description": "Search terms for filtering"
+                        },
+                        "days": {
+                            "type": "integer",
+                            "description": "Number of days to look back for listing"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return"
+                        },
+                        "modifications": {
+                            "type": "object",
+                            "description": "Modifications for update commands",
+                            "properties": {
+                                "content": {"type": "string"},
+                                "category": {"type": "string"},
+                                "deadline": {"type": "string"},
+                                "status": {"type": "string"}
+                            }
+                        }
+                    },
+                    "required": ["action", "content"]
+                }
+            }
+        });
+
+        let request_body = json!({
+            "model": self.config.model,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": system_prompt
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": input
+                        }
+                    ]
+                }
+            ],
+            "tools": [tool_definition],
+            "tool_choice": {"type": "function", "function": {"name": "parse_task_command"}},
+            "temperature": 0.1,
+            "max_output_tokens": 300,
+            "text": {
+                "format": {
+                    "type": "text"
+                }
+            }
+        });
+
+        let response = self.client
+            .post(&format!("{}/responses", self.config.api_base_url))
+            .header("Authorization", format!("Bearer {}", self.config.api_key.as_ref().unwrap()))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
+
+        if response.status() == 401 {
+            return Err(NLPError::InvalidAPIKey);
+        }
+
+        if response.status() == 429 {
+            return Err(NLPError::RateLimited);
+        }
+
+        let response_text = response.text().await?;
+        let response_json: Value = serde_json::from_str(&response_text)?;
+
+        // Check for API errors
+        if let Some(error) = response_json.get("error") {
+            return Err(NLPError::APIError(
+                error.get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown API error")
+                    .to_string()
+            ));
+        }
+
+        // Extract the tool call response
+        let output = response_json.get("output")
+            .and_then(|o| o.as_array())
+            .and_then(|arr| arr.first())
+            .ok_or_else(|| NLPError::ParseError("No output in response".to_string()))?;
+
+        let tool_calls = output.get("tool_calls")
+            .and_then(|tc| tc.as_array());
+
+        if let Some(tool_calls) = tool_calls {
+            for tool_call in tool_calls {
+                if let Some(function) = tool_call.get("function") {
+                    if let Some("parse_task_command") = function.get("name").and_then(|n| n.as_str()) {
+                        if let Some(arguments) = function.get("arguments") {
+                            let command: NLPCommand = serde_json::from_value(arguments.clone())?;
+                            return Ok(command);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: try to extract text response if no tool calls
+        if let Some(content) = output.get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+        {
             return self.fallback_parse(content);
         }
 
