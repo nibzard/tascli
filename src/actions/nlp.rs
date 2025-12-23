@@ -1,13 +1,9 @@
 //! Natural language processing action handlers
 
 use rusqlite::Connection;
-use std::env;
 
 use crate::{
     actions::{
-        addition,
-        list,
-        modify,
         display::{print_green, print_yellow, print_red},
     },
     args::parser::{
@@ -15,7 +11,7 @@ use crate::{
         NLPConfigCommand,
     },
     config,
-    nlp::{NLPParser, NLPConfig},
+    nlp::{NLPParser, SequentialExecutor, CompoundExecutionMode},
 };
 
 pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), String> {
@@ -94,42 +90,82 @@ fn handle_compound_command(
 ) -> Result<(), String> {
     print_green(&format!("Interpreted compound command: {}", description));
 
-    if show {
-        for (i, args) in all_args.iter().enumerate() {
-            print_yellow(&format!("  {}. {}", i + 1, args.join(" ")));
-        }
+    // Convert args to NLPCommands for SequentialExecutor
+    // This is a simplified approach - in production we'd get the parsed commands directly
+    let commands = convert_args_to_commands(all_args);
 
-        print_yellow("Execute these commands? [Y/n] ");
+    // Create executor
+    let executor = SequentialExecutor::new(false, true); // Continue on error, verbose
 
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)
-            .map_err(|e| format!("Failed to read input: {}", e))?;
+    // Execute with preview
+    let execution_mode = CompoundExecutionMode::ContinueOnError;
 
-        let input = input.trim().to_lowercase();
-        if !input.is_empty() && input != "y" && input != "yes" {
-            print_yellow("Commands cancelled.");
-            return Ok(());
-        }
-    }
+    match executor.execute_compound(conn, &commands, &execution_mode, show) {
+        Ok(summary) => {
+            // Print detailed results
+            for result in &summary.results {
+                if result.success {
+                    print_green(&format!("Command {}: Success", result.index + 1));
+                } else {
+                    print_red(&format!("Command {}: Failed - {}",
+                        result.index + 1,
+                        result.error.as_deref().unwrap_or("Unknown error")));
+                }
+            }
 
-    // Execute each command sequentially
-    let mut results = Vec::new();
-    for (i, args) in all_args.iter().enumerate() {
-        print_green(&format!("Executing command {}/{}...", i + 1, all_args.len()));
-        match execute_parsed_command(conn, args) {
-            Ok(()) => results.push(format!("Command {}: Success", i + 1)),
-            Err(e) => {
-                let err_msg = format!("Command {}: Failed - {}", i + 1, e);
-                print_red(&err_msg);
-                results.push(err_msg);
-                // Continue executing remaining commands
+            // Print summary
+            print_green(&format!("\n{}", summary.to_summary_string()));
+
+            if !summary.is_complete_success() {
+                print_yellow("\nSome commands failed. You can retry failed commands individually.");
+            }
+
+            Ok(())
+        },
+        Err(e) => {
+            if e == "Commands cancelled by user." {
+                print_yellow("Commands cancelled.");
+                Ok(())
+            } else {
+                Err(e)
             }
         }
     }
+}
 
-    // Print summary
-    print_green(&format!("Compound command complete. Executed {} command(s).", all_args.len()));
-    Ok(())
+/// Convert CLI args back to NLPCommands (simplified for compatibility)
+fn convert_args_to_commands(all_args: &[Vec<String>]) -> Vec<crate::nlp::NLPCommand> {
+    use crate::nlp::{NLPCommand, ActionType};
+
+    all_args.iter().map(|args| {
+        let action = if args.first().map_or(false, |a| a == "task") {
+            ActionType::Task
+        } else if args.first().map_or(false, |a| a == "done") {
+            ActionType::Done
+        } else if args.first().map_or(false, |a| a == "update") {
+            ActionType::Update
+        } else if args.first().map_or(false, |a| a == "delete") {
+            ActionType::Delete
+        } else if args.first().map_or(false, |a| a == "record") {
+            ActionType::Record
+        } else {
+            ActionType::List
+        };
+
+        // Extract content from args (simplified)
+        let content = args.get(1).cloned().unwrap_or_default();
+        let category = args.iter()
+            .position(|a| a == "-c")
+            .and_then(|i| args.get(i + 1))
+            .cloned();
+
+        NLPCommand {
+            action,
+            content,
+            category,
+            ..Default::default()
+        }
+    }).collect()
 }
 
 fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
@@ -203,9 +239,6 @@ fn execute_parsed_command(conn: &Connection, args: &[String]) -> Result<(), Stri
     // For now, let's create a mock CLI args structure
     use crate::args::parser::{CliArgs};
     use clap::Parser;
-
-    // Create command string
-    let cmd_string = format!("tascli {}", args.join(" "));
 
     // Split into args for parsing
     let cmd_args: Vec<&str> = std::iter::once("tascli")

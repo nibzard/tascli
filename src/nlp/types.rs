@@ -103,6 +103,134 @@ pub enum CompoundExecutionMode {
     Parallel,
     /// Execute with dependency resolution
     Dependent,
+    /// Stop on first error
+    StopOnError,
+    /// Continue on error, collect all results
+    ContinueOnError,
+}
+
+/// Execution result for a single command in a compound sequence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandExecutionResult {
+    /// Index of the command in the sequence
+    pub index: usize,
+    /// Whether the command succeeded
+    pub success: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Output data from the command
+    pub output: Option<CommandOutput>,
+}
+
+/// Output data from executed commands
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandOutput {
+    /// ID of created/modified item
+    pub item_id: Option<i64>,
+    /// Content of the command
+    pub content: String,
+    /// Category if applicable
+    pub category: Option<String>,
+    /// Additional metadata
+    pub metadata: HashMap<String, String>,
+}
+
+/// Execution context shared between sequential commands
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SequentialContext {
+    /// Results from previous commands
+    pub previous_results: Vec<CommandExecutionResult>,
+    /// Last created item ID
+    pub last_item_id: Option<i64>,
+    /// Last used category
+    pub last_category: Option<String>,
+    /// Last content
+    pub last_content: Option<String>,
+    /// Variables set during execution
+    pub variables: HashMap<String, String>,
+}
+
+impl Default for SequentialContext {
+    fn default() -> Self {
+        Self {
+            previous_results: Vec::new(),
+            last_item_id: None,
+            last_category: None,
+            last_content: None,
+            variables: HashMap::new(),
+        }
+    }
+}
+
+impl SequentialContext {
+    /// Update context with execution result
+    pub fn update_with_result(&mut self, result: &CommandExecutionResult) {
+        self.previous_results.push(result.clone());
+        if let Some(ref output) = result.output {
+            if output.item_id.is_some() {
+                self.last_item_id = output.item_id;
+            }
+            if output.category.is_some() {
+                self.last_category = output.category.clone();
+            }
+            self.last_content = Some(output.content.clone());
+        }
+    }
+
+    /// Get a variable value
+    pub fn get_var(&self, key: &str) -> Option<&String> {
+        self.variables.get(key)
+    }
+
+    /// Set a variable value
+    pub fn set_var(&mut self, key: String, value: String) {
+        self.variables.insert(key, value);
+    }
+}
+
+/// Summary of compound command execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionSummary {
+    /// Total commands executed
+    pub total: usize,
+    /// Successful commands
+    pub successful: usize,
+    /// Failed commands
+    pub failed: usize,
+    /// Individual results
+    pub results: Vec<CommandExecutionResult>,
+    /// Final context state
+    pub final_context: SequentialContext,
+}
+
+impl ExecutionSummary {
+    pub fn new(total: usize, results: Vec<CommandExecutionResult>, final_context: SequentialContext) -> Self {
+        let successful = results.iter().filter(|r| r.success).count();
+        let failed = results.iter().filter(|r| !r.success).count();
+
+        Self {
+            total,
+            successful,
+            failed,
+            results,
+            final_context,
+        }
+    }
+
+    /// Whether all commands succeeded
+    pub fn is_complete_success(&self) -> bool {
+        self.failed == 0
+    }
+
+    /// Get human-readable summary
+    pub fn to_summary_string(&self) -> String {
+        if self.is_complete_success() {
+            format!("All {} command(s) executed successfully", self.total)
+        } else {
+            format!("Executed {} command(s): {} succeeded, {} failed",
+                self.total, self.successful, self.failed)
+        }
+    }
 }
 
 impl NLPCommand {
