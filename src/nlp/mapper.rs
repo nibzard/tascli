@@ -178,7 +178,11 @@ impl CommandMapper {
             },
 
             ActionType::List => {
-                let item_type = if command.content.contains("record") { "records" } else { "tasks" };
+                let item_type = if command.content.contains("record") || command.content.contains("history") {
+                    "records"
+                } else {
+                    "tasks"
+                };
                 let mut desc = format!("List {}", item_type);
 
                 let mut filters = Vec::new();

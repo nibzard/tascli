@@ -9,6 +9,9 @@ pub mod mapper;
 pub mod validator;
 pub mod types;
 
+#[cfg(test)]
+mod mapper_tests;
+
 pub use client::OpenAIClient;
 pub use types::*;
 pub use parser::NLPParser;
