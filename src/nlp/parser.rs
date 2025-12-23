@@ -10,10 +10,15 @@ use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 
 pub struct NLPParser {
     client: Arc<Mutex<OpenAIClient>>,
-    cache: Arc<Mutex<HashMap<String, (NLPCommand, std::time::Instant)>>>,
+    /// Fast LRU cache for frequently accessed commands (in-memory, size-limited)
+    hot_cache: Arc<Mutex<LruCache<String, NLPCommand>>>,
+    /// Fallback HashMap for less frequently accessed items with timestamps
+    cold_cache: Arc<Mutex<HashMap<String, (NLPCommand, std::time::Instant)>>>,
     config: NLPConfig,
     context: Arc<Mutex<CommandContext>>,
     pattern_matcher_enabled: bool,
@@ -23,13 +28,16 @@ impl NLPParser {
     /// Create a new NLP parser with the given configuration
     pub fn new(config: NLPConfig) -> Self {
         let client = Arc::new(Mutex::new(OpenAIClient::new(config.clone())));
-        let cache = Arc::new(Mutex::new(HashMap::new()));
+        // Hot cache: stores 100 most recently used commands
+        let hot_cache = Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())));
+        let cold_cache = Arc::new(Mutex::new(HashMap::new()));
         let context = Arc::new(Mutex::new(CommandContext::default()));
         let pattern_matcher_enabled = true;
 
         Self {
             client,
-            cache,
+            hot_cache,
+            cold_cache,
             config,
             context,
             pattern_matcher_enabled,
@@ -39,13 +47,15 @@ impl NLPParser {
     /// Create a new NLP parser with initial categories
     pub fn with_categories(config: NLPConfig, categories: Vec<String>) -> Self {
         let client = Arc::new(Mutex::new(OpenAIClient::new(config.clone())));
-        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let hot_cache = Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())));
+        let cold_cache = Arc::new(Mutex::new(HashMap::new()));
         let context = Arc::new(Mutex::new(CommandContext::new(categories)));
         let pattern_matcher_enabled = true;
 
         Self {
             client,
-            cache,
+            hot_cache,
+            cold_cache,
             config,
             context,
             pattern_matcher_enabled,
@@ -192,16 +202,49 @@ impl NLPParser {
     }
 
     /// Get cached command if available and not expired
+    /// Checks hot cache (LRU) first, then cold cache (HashMap with TTL)
     async fn get_cached_command(&self, input: &str) -> Option<NLPCommand> {
-        let mut cache = self.cache.lock().await;
         let hash = self.hash_input(input);
 
-        if let Some((command, timestamp)) = cache.get(&hash) {
-            // Cache entries expire after 1 hour
-            if timestamp.elapsed() < std::time::Duration::from_secs(3600) {
+        // Check hot cache first (LRU - fast, recent items)
+        {
+            let mut hot_cache = self.hot_cache.lock().await;
+            if let Some(command) = hot_cache.get(&hash) {
                 return Some(command.clone());
+            }
+        }
+
+        // Check cold cache (with TTL) - clone the value to avoid borrow issues
+        let promote_to_hot = {
+            let cold_cache = self.cold_cache.lock().await;
+            if let Some((command, timestamp)) = cold_cache.get(&hash) {
+                // Cache entries expire after 1 hour
+                if timestamp.elapsed() < std::time::Duration::from_secs(3600) {
+                    Some(command.clone())
+                } else {
+                    None
+                }
             } else {
-                cache.remove(&hash);
+                None
+            }
+        };
+
+        if let Some(command) = promote_to_hot {
+            // Promote to hot cache
+            {
+                let mut hot_cache = self.hot_cache.lock().await;
+                hot_cache.put(hash.clone(), command.clone());
+            }
+            return Some(command);
+        }
+
+        // Clean up expired entries from cold cache
+        {
+            let mut cold_cache = self.cold_cache.lock().await;
+            if let Some((_, timestamp)) = cold_cache.get(&hash) {
+                if timestamp.elapsed() >= std::time::Duration::from_secs(3600) {
+                    cold_cache.remove(&hash);
+                }
             }
         }
 
@@ -209,26 +252,13 @@ impl NLPParser {
     }
 
     /// Cache a parsed command
+    /// Stores in hot cache (LRU); evicted items can fall through to cold cache
     async fn cache_command(&self, input: &str, command: NLPCommand) {
-        let mut cache = self.cache.lock().await;
         let hash = self.hash_input(input);
 
-        // Limit cache size to prevent memory bloat
-        if cache.len() > 1000 {
-            // Remove oldest entries
-            let mut keys_to_remove = Vec::new();
-            for (key, (_, timestamp)) in cache.iter() {
-                if timestamp.elapsed() > std::time::Duration::from_secs(3600) {
-                    keys_to_remove.push(key.clone());
-                }
-            }
-
-            for key in keys_to_remove {
-                cache.remove(&key);
-            }
-        }
-
-        cache.insert(hash, (command, std::time::Instant::now()));
+        // Try to put in hot cache - if it's full, the LRU will evict automatically
+        let mut hot_cache = self.hot_cache.lock().await;
+        hot_cache.put(hash.clone(), command);
     }
 
     /// Create a hash for caching purposes
@@ -240,19 +270,23 @@ impl NLPParser {
 
     /// Clear the cache
     pub async fn clear_cache(&self) {
-        let mut cache = self.cache.lock().await;
-        cache.clear();
+        let mut hot_cache = self.hot_cache.lock().await;
+        let mut cold_cache = self.cold_cache.lock().await;
+        hot_cache.clear();
+        cold_cache.clear();
     }
 
     /// Get cache statistics
-    pub async fn cache_stats(&self) -> (usize, usize) {
-        let cache = self.cache.lock().await;
-        let total = cache.len();
-        let expired = cache.values()
+    pub async fn cache_stats(&self) -> (usize, usize, usize) {
+        let hot_cache = self.hot_cache.lock().await;
+        let cold_cache = self.cold_cache.lock().await;
+        let hot_len = hot_cache.len();
+        let cold_total = cold_cache.len();
+        let cold_expired = cold_cache.values()
             .filter(|(_, timestamp)| timestamp.elapsed() > std::time::Duration::from_secs(3600))
             .count();
 
-        (total, expired)
+        (hot_len, cold_total, cold_expired)
     }
 
     /// Parse with fallback to traditional commands if NLP fails
@@ -391,14 +425,14 @@ mod tests {
         assert_eq!(cached.unwrap().content, "test task");
 
         // Test cache stats
-        let (total, expired) = parser.cache_stats().await;
-        assert_eq!(total, 1);
-        assert_eq!(expired, 0);
+        let (hot_len, cold_total, cold_expired) = parser.cache_stats().await;
+        assert_eq!(hot_len + cold_total, 1);
+        assert_eq!(cold_expired, 0);
 
         // Test cache clearing
         parser.clear_cache().await;
-        let (total, expired) = parser.cache_stats().await;
-        assert_eq!(total, 0);
+        let (hot_len, cold_total, _) = parser.cache_stats().await;
+        assert_eq!(hot_len + cold_total, 0);
     }
 
     // === Hash Input Tests ===
@@ -454,8 +488,8 @@ mod tests {
 
         // Note: We can't easily test actual expiration in unit tests without
         // manipulating time or waiting, but we can test the stats reporting
-        let (total, _expired) = parser.cache_stats().await;
-        assert_eq!(total, 1);
+        let (hot_len, cold_total, _cold_expired) = parser.cache_stats().await;
+        assert_eq!(hot_len + cold_total, 1);
         // Fresh entries shouldn't be counted as expired
     }
 
@@ -489,8 +523,8 @@ mod tests {
         assert_eq!(cached1.unwrap().action, ActionType::Task);
         assert_eq!(cached2.unwrap().action, ActionType::Record);
 
-        let (total, _) = parser.cache_stats().await;
-        assert_eq!(total, 2);
+        let (hot_len, cold_total, _) = parser.cache_stats().await;
+        assert_eq!(hot_len + cold_total, 2);
     }
 
     #[tokio::test]
@@ -578,13 +612,13 @@ mod tests {
         parser.cache_command("test2", command.clone()).await;
         parser.cache_command("test3", command).await;
 
-        let (total, _) = parser.cache_stats().await;
-        assert_eq!(total, 3);
+        let (hot_len, cold_total, _) = parser.cache_stats().await;
+        assert_eq!(hot_len + cold_total, 3);
 
         parser.clear_cache().await;
 
-        let (total, _) = parser.cache_stats().await;
-        assert_eq!(total, 0);
+        let (hot_len, cold_total, _) = parser.cache_stats().await;
+        assert_eq!(hot_len + cold_total, 0);
 
         // Verify items are actually gone
         assert!(parser.get_cached_command("test1").await.is_none());
@@ -678,9 +712,10 @@ mod tests {
         };
         let parser = NLPParser::new(config);
 
-        let (total, expired) = parser.cache_stats().await;
-        assert_eq!(total, 0);
-        assert_eq!(expired, 0);
+        let (hot_len, cold_total, cold_expired) = parser.cache_stats().await;
+        assert_eq!(hot_len, 0);
+        assert_eq!(cold_total, 0);
+        assert_eq!(cold_expired, 0);
     }
 
     #[tokio::test]
@@ -709,8 +744,8 @@ mod tests {
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().content, "updated");
 
-        let (total, _) = parser.cache_stats().await;
-        assert_eq!(total, 1); // Still only 1 entry
+        let (hot_len, cold_total, _) = parser.cache_stats().await;
+        assert_eq!(hot_len + cold_total, 1); // Still only 1 entry
     }
 
     // === Context Tests ===

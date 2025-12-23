@@ -95,7 +95,15 @@
   - Configurable TTL (default 7 days), cache statistics, auto-cleanup
   - All 697 tests pass including 23 new cache tests
 - [x] Add quick pattern matching for simple commands ✅
-- [ ] Create async API call handling with timeouts
+- [x] Create async API call handling with timeouts ✅
+  - Added configurable timeout_seconds field to NLPConfig (default: 30 seconds)
+  - Added Timeout(u64) error variant to NLPError
+  - Updated OpenAIClient to use configurable timeout from config
+  - Added timeout detection using reqwest's is_timeout() method
+  - Updated parse_command and parse_command_with_context with timeout handling
+  - Added timeout_seconds to NLPConfigSection in config/mod.rs
+  - Comprehensive timeout tests (client.rs, types.rs)
+  - All 763 tests pass
 - [ ] Optimize for reduced API usage
 
 ## Phase 3: Advanced Features (Week 5-6)

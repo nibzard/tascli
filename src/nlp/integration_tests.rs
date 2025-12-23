@@ -548,9 +548,9 @@ async fn test_parser_with_cache_flow() {
     let parser = NLPParser::new(config);
 
     // Test cache stats initially
-    let (total, expired) = parser.cache_stats().await;
-    assert_eq!(total, 0);
-    assert_eq!(expired, 0);
+    let (hot_len, cold_total, cold_expired) = parser.cache_stats().await;
+    assert_eq!(hot_len + cold_total, 0);
+    assert_eq!(cold_expired, 0);
 
     // Test that parser is ready check works
     assert!(!parser.is_ready());
@@ -573,9 +573,9 @@ async fn test_parser_cache_operations() {
     parser.clear_cache().await;
 
     // Verify cache stats after clear
-    let (total, expired) = parser.cache_stats().await;
-    assert_eq!(total, 0);
-    assert_eq!(expired, 0);
+    let (hot_len, cold_total, cold_expired) = parser.cache_stats().await;
+    assert_eq!(hot_len + cold_total, 0);
+    assert_eq!(cold_expired, 0);
 }
 
 #[tokio::test]

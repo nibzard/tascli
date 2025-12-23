@@ -94,6 +94,30 @@ static CLEAR_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(?:clear\s+all|reset)(?:\s+tasks?)?$").unwrap()
 });
 
+// === Category Setting Patterns ===
+// "set category to ...", "change category to ..."
+static SET_CATEGORY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^set\s+(\w+)\s+category\s+to\s+(\w+)$").unwrap()
+});
+
+// === Priority Patterns ===
+// "high priority tasks", "urgent tasks"
+static PRIORITY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(high|low|medium)\s+priority\s+tasks?$").unwrap()
+});
+
+// === Date-based Quick Patterns ===
+// "today's tasks", "tomorrow's tasks"
+static DATE_QUICK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(today|tomorrow|yesterday)'?s?\s+tasks?$").unwrap()
+});
+
+// === Search Patterns ===
+// "search for ...", "find ..."
+static SEARCH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^search\s+(.+)$").unwrap()
+});
+
 impl PatternMatcher {
     /// Try to match input against known patterns
     /// Returns PatternMatch::Matched if a simple pattern is found
@@ -284,6 +308,64 @@ impl PatternMatcher {
             return PatternMatch::Ambiguous("Clear all tasks? Confirm with 'yes'".to_string());
         }
 
+        // === Search Pattern ===
+        if let Some(caps) = SEARCH_RE.captures(input) {
+            if let Some(search_term) = caps.get(1) {
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::List,
+                    content: String::new(),
+                    search: Some(search_term.as_str().to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // === Priority Pattern ===
+        if let Some(caps) = PRIORITY_RE.captures(input) {
+            if let Some(priority) = caps.get(1) {
+                let mut filters = std::collections::HashMap::new();
+                filters.insert("priority".to_string(), priority.as_str().to_string());
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::List,
+                    content: String::new(),
+                    filters,
+                    ..Default::default()
+                });
+            }
+        }
+
+        // === Date Quick Pattern ===
+        if let Some(caps) = DATE_QUICK_RE.captures(input) {
+            if let Some(day) = caps.get(1) {
+                let query_type = match day.as_str().to_lowercase().as_str() {
+                    "today" => QueryType::DueToday,
+                    "tomorrow" => QueryType::DueTomorrow,
+                    "yesterday" => QueryType::Overdue,
+                    _ => return PatternMatch::NeedsAI,
+                };
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::List,
+                    content: String::new(),
+                    query_type: Some(query_type),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // === Category Setting Pattern ===
+        if let Some(caps) = SET_CATEGORY_RE.captures(input) {
+            if let (Some(item_name), Some(category)) = (caps.get(1), caps.get(2)) {
+                let mut modifications = std::collections::HashMap::new();
+                modifications.insert("category".to_string(), category.as_str().to_string());
+                return PatternMatch::Matched(NLPCommand {
+                    action: ActionType::Update,
+                    content: item_name.as_str().to_string(),
+                    modifications,
+                    ..Default::default()
+                });
+            }
+        }
+
         // === Single number (treat as show task details) ===
         if let Some(caps) = Regex::new(r"^#?(\d+)$").unwrap().captures(input) {
             return PatternMatch::Matched(NLPCommand {
@@ -328,7 +410,7 @@ impl PatternMatcher {
             return false;
         }
 
-        // Quick heuristics for simple inputs
+        // Quick heuristics for simple inputs (expanded with new patterns)
         input.starts_with("add ")
             || input.starts_with("task ")
             || input.starts_with("complete ")
@@ -340,17 +422,20 @@ impl PatternMatcher {
             || (input.starts_with("show ") && !input.starts_with("show me"))
             || input.starts_with("update ")
             || input.starts_with("edit ")
-            || Regex::new(r"^(overdue|upcoming|urgent|help|\?|clear)").unwrap().is_match(&input)
+            || input.starts_with("search ")
+            || input.starts_with("set ")
+            || Regex::new(r"^(overdue|upcoming|urgent|help|\?|clear|today|tomorrow|yesterday)").unwrap().is_match(&input)
     }
 
     /// Get statistics about pattern matching
     pub fn stats() -> PatternMatcherStats {
         PatternMatcherStats {
-            total_patterns: 13,
+            total_patterns: 18,
             patterns_checked: vec![
                 "add_task", "add_record", "complete", "delete", "list_all",
                 "list_records", "list_category", "list_status", "query_type",
-                "update", "help", "clear", "single_number", "simple_add"
+                "update", "help", "clear", "single_number", "simple_add",
+                "search", "priority", "date_quick", "set_category"
             ],
         }
     }
