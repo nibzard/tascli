@@ -15,6 +15,9 @@ mod mapper_tests;
 #[cfg(test)]
 mod integration_tests;
 
+#[cfg(test)]
+mod natural_language_patterns_tests;
+
 pub use client::OpenAIClient;
 pub use types::*;
 pub use parser::NLPParser;
