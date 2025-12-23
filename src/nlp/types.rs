@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// Represents the different types of actions tascli can perform
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -13,6 +14,19 @@ pub enum ActionType {
     Update,
     Delete,
     List,
+}
+
+impl fmt::Display for ActionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ActionType::Task => write!(f, "task"),
+            ActionType::Record => write!(f, "record"),
+            ActionType::Done => write!(f, "done"),
+            ActionType::Update => write!(f, "update"),
+            ActionType::Delete => write!(f, "delete"),
+            ActionType::List => write!(f, "list"),
+        }
+    }
 }
 
 /// Represents the different status options for items
@@ -931,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_nlp_config_deserialize() {
-        let json = r#"{"enabled":true,"api_key":"sk-test","model":"gpt-4","fallback_to_traditional":false,"cache_commands":false,"context_window":5,"max_api_calls_per_minute":10,"api_base_url":"https://api.test.com","timeout_seconds":60}"#;
+        let json = r#"{"enabled":true,"api_key":"sk-test","model":"gpt-4","fallback_to_traditional":false,"cache_commands":false,"context_window":5,"max_api_calls_per_minute":10,"api_base_url":"https://api.test.com","timeout_seconds":60,"preview_enabled":true,"auto_confirm":false}"#;
         let config: NLPConfig = serde_json::from_str(json).unwrap();
 
         assert!(config.enabled);
@@ -943,6 +957,8 @@ mod tests {
         assert_eq!(config.max_api_calls_per_minute, 10);
         assert_eq!(config.api_base_url, "https://api.test.com");
         assert_eq!(config.timeout_seconds, 60);
+        assert!(config.preview_enabled);
+        assert!(!config.auto_confirm);
     }
 
     // === Edge Cases ===

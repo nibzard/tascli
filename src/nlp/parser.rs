@@ -6,6 +6,7 @@ use super::mapper::CommandMapper;
 use super::validator::CommandValidator;
 use super::context::{CommandContext, FuzzyMatcher};
 use super::pattern_matcher::{PatternMatcher, PatternMatch};
+use super::learning::LearningEngine;
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,6 +23,8 @@ pub struct NLPParser {
     config: NLPConfig,
     context: Arc<Mutex<CommandContext>>,
     pattern_matcher_enabled: bool,
+    /// Learning engine for adaptive improvements from user corrections
+    learning_engine: Arc<Mutex<LearningEngine>>,
 }
 
 impl NLPParser {
@@ -33,6 +36,7 @@ impl NLPParser {
         let cold_cache = Arc::new(Mutex::new(HashMap::new()));
         let context = Arc::new(Mutex::new(CommandContext::default()));
         let pattern_matcher_enabled = true;
+        let learning_engine = Arc::new(Mutex::new(LearningEngine::new()));
 
         Self {
             client,
@@ -41,6 +45,7 @@ impl NLPParser {
             config,
             context,
             pattern_matcher_enabled,
+            learning_engine,
         }
     }
 
@@ -51,6 +56,7 @@ impl NLPParser {
         let cold_cache = Arc::new(Mutex::new(HashMap::new()));
         let context = Arc::new(Mutex::new(CommandContext::new(categories)));
         let pattern_matcher_enabled = true;
+        let learning_engine = Arc::new(Mutex::new(LearningEngine::new()));
 
         Self {
             client,
@@ -59,11 +65,32 @@ impl NLPParser {
             config,
             context,
             pattern_matcher_enabled,
+            learning_engine,
         }
+    }
+
+    /// Initialize the learning engine with a database path
+    pub async fn init_learning(&self, db_path: &std::path::Path) -> Result<(), NLPError> {
+        let engine = LearningEngine::with_db(db_path)?;
+        let mut learning = self.learning_engine.lock().await;
+        *learning = engine;
+        Ok(())
     }
 
     /// Parse natural language input and return a structured command
     pub async fn parse(&self, input: &str) -> NLPResult<NLPCommand> {
+        // Check learning engine first for learned corrections
+        let learning = self.learning_engine.lock().await;
+        if let Some(learned_command) = learning.apply_learning(input) {
+            drop(learning);
+            // Update context with learned command
+            let mut context_state = self.context.lock().await;
+            context_state.add_command(learned_command.clone(), input.to_string());
+            drop(context_state);
+            return Ok(learned_command);
+        }
+        drop(learning);
+
         // Check cache first if enabled
         if self.config.cache_commands {
             if let Some(cached) = self.get_cached_command(input).await {
@@ -380,6 +407,30 @@ impl NLPParser {
     pub async fn context_string(&self) -> String {
         let context = self.context.lock().await;
         context.to_context_string()
+    }
+
+    /// Learn from a user correction
+    pub async fn learn_correction(&self, original_input: &str, intended_command: &NLPCommand) -> Result<(), NLPError> {
+        let learning = self.learning_engine.lock().await;
+        learning.learn_from_correction(original_input, intended_command)
+    }
+
+    /// Get learning-based suggestions for input
+    pub async fn suggest_learning(&self, input: &str) -> Vec<String> {
+        let learning = self.learning_engine.lock().await;
+        learning.suggest_corrections(input)
+    }
+
+    /// Get learning statistics
+    pub async fn learning_stats(&self) -> Option<super::learning::LearningStats> {
+        let learning = self.learning_engine.lock().await;
+        learning.stats()
+    }
+
+    /// Clear all learned data
+    pub async fn clear_learning(&self) -> Result<(), NLPError> {
+        let learning = self.learning_engine.lock().await;
+        learning.clear()
     }
 }
 

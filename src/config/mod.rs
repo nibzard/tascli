@@ -199,6 +199,17 @@ pub fn update_nlp_config(nlp_config: &crate::nlp::NLPConfig) -> Result<(), Strin
     save_config(&config)
 }
 
+/// Get the learning database path
+pub fn get_learning_db_path() -> Result<std::path::PathBuf, String> {
+    let home_dir = home::home_dir().ok_or_else(|| String::from("cannot find home directory"))?;
+    let data_dir = match get_config_data_dir(home_dir.clone()) {
+        Some(dir_path) => str_to_pathbuf(dir_path)?,
+        None => DEFAULT_DATA_DIR.iter().fold(home_dir, |p, d| p.join(d)),
+    };
+    fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create data directory: {}", e))?;
+    Ok(data_dir.join("nlp_learning.db"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

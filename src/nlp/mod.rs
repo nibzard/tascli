@@ -17,6 +17,7 @@ pub mod conditional;
 pub mod preview;
 pub mod suggestions;
 pub mod error_recovery;
+pub mod learning;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -94,4 +95,13 @@ pub use error_recovery::{
     ErrorRecoveryEngine,
     RecoveryContext,
     InteractiveRecoveryHandler,
+};
+pub use learning::{
+    LearningEngine,
+    LearningDB,
+    LearnedCorrection,
+    LearnedPattern,
+    PatternType,
+    PatternCorrection,
+    LearningStats,
 };

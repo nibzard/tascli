@@ -8,7 +8,8 @@
 - [x] Plan the OpenAI Responses API integration
 - [x] Design the command parsing and mapping system
 - [x] Plan implementation phases and architecture
-- [ ] Add OpenAI API dependency to Cargo.toml
+- [x] Add OpenAI API dependency to Cargo.toml ✅
+  - Added async-openai 0.24 to Cargo.toml dependencies
 - [ ] Create NLP module structure in src/nlp/
 - [ ] Set up configuration for NLP settings
 - [ ] Create basic OpenAI client implementation
@@ -143,7 +144,8 @@
   - CLI commands: `nlp config suggest <input>` and `nlp config patterns`
   - AutoCompleter for shell integration
   - 23 unit tests covering all functionality
-- [ ] Error recovery and clarification requests
+- [x] Error recovery and clarification requests ✅
+  - Implemented intelligent error recovery with categorization, clarification requests, guided prompts, and suggestion strategies. Integrated into NLP command handler.
 - [ ] Learning from user corrections
 - [ ] Personalized pattern recognition
 

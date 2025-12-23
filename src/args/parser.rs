@@ -230,6 +230,24 @@ pub enum NLPConfigCommand {
     },
     /// show available command patterns
     Patterns,
+    /// show learning statistics
+    LearningStats,
+    /// clear all learned corrections
+    ClearLearning,
+    /// teach the system a correction (format: "original_input" -> intended command)
+    Learn {
+        /// The original incorrect input
+        original: String,
+        /// The intended action (task, done, update, delete, list, record)
+        #[arg(short, long)]
+        action: String,
+        /// The intended content
+        #[arg(short, long)]
+        content: String,
+        /// The intended category (optional)
+        #[arg(short, long)]
+        category: Option<String>,
+    },
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {

@@ -16,6 +16,8 @@ use crate::{
         PreviewManager, commands_to_previews, ConfirmationResult,
         SuggestionEngine, SuggestionRequest, PatternMatcher,
         ErrorRecoveryEngine, InteractiveRecoveryHandler,
+        LearningEngine, LearningStats,
+        ActionType,
     },
 };
 
@@ -371,6 +373,107 @@ fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {
             print_yellow("Use 'tascli nlp config suggest <partial-input>' to get suggestions for your input.");
 
             Ok(())
+        },
+
+        NLPConfigCommand::LearningStats => {
+            // Get learning statistics
+            let learning_db_path = config::get_learning_db_path()?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+
+            rt.block_on(async {
+                let engine = LearningEngine::with_db(&learning_db_path);
+                match engine {
+                    Ok(engine) => {
+                        let stats = engine.stats().unwrap_or(LearningStats {
+                            total_corrections: 0,
+                            total_patterns: 0,
+                            average_confidence: 0.0,
+                            total_confirmations: 0,
+                        });
+
+                        println!("Learning Statistics:");
+                        println!("=====================");
+                        println!();
+                        println!("  Total corrections learned: {}", stats.total_corrections);
+                        println!("  Total patterns learned: {}", stats.total_patterns);
+                        println!("  Average confidence: {:.2}", stats.average_confidence);
+                        println!("  Total confirmations: {}", stats.total_confirmations);
+
+                        if stats.total_corrections == 0 {
+                            println!();
+                            print_yellow("No corrections learned yet. The system will learn as you make corrections.");
+                        }
+
+                        Ok(())
+                    }
+                    Err(e) => {
+                        print_red(&format!("Failed to access learning database: {}", e));
+                        Err(format!("Failed to access learning database: {}", e))
+                    }
+                }
+            })
+        },
+
+        NLPConfigCommand::ClearLearning => {
+            let learning_db_path = config::get_learning_db_path()?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+
+            rt.block_on(async {
+                let engine = LearningEngine::with_db(&learning_db_path);
+                match engine {
+                    Ok(engine) => {
+                        engine.clear()
+                            .map_err(|e| format!("Failed to clear learning data: {}", e))?;
+                        print_green("All learned corrections have been cleared.");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        Err(format!("Failed to access learning database: {}", e))
+                    }
+                }
+            })
+        },
+
+        NLPConfigCommand::Learn { original, action, content, category } => {
+            let learning_db_path = config::get_learning_db_path()?;
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+
+            rt.block_on(async {
+                let engine = LearningEngine::with_db(&learning_db_path);
+                match engine {
+                    Ok(engine) => {
+                        // Parse the action string
+                        let action_type = match action.to_lowercase().as_str() {
+                            "task" | "add" => ActionType::Task,
+                            "done" | "complete" => ActionType::Done,
+                            "update" | "edit" => ActionType::Update,
+                            "delete" | "remove" => ActionType::Delete,
+                            "list" | "show" => ActionType::List,
+                            "record" => ActionType::Record,
+                            _ => return Err(format!("Unknown action: {}", action)),
+                        };
+
+                        let intended_command = crate::nlp::NLPCommand {
+                            action: action_type.clone(),
+                            content: content.clone(),
+                            category: category.clone(),
+                            ..Default::default()
+                        };
+
+                        engine.learn_from_correction(&original, &intended_command)
+                            .map_err(|e| format!("Failed to store correction: {}", e))?;
+
+                        print_green(&format!("Learned: '{}' -> {} {}", original, action_type, content));
+                        Ok(())
+                    }
+                    Err(e) => {
+                        Err(format!("Failed to access learning database: {}", e))
+                    }
+                }
+            })
         },
     }
 }
