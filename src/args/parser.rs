@@ -12,8 +12,16 @@ use crate::args::timestr::{parse_flexible_timestr, parse_recurring_timestr};
 #[derive(Debug, Parser)]
 #[command(author, version)]
 pub struct CliArgs {
+    /// Disable NLP mode and force traditional command parsing
+    #[arg(short, long, global = false, default_value_t = false)]
+    pub no_nlp: bool,
+
     #[command(subcommand)]
-    pub arguments: Action,
+    pub arguments: Option<Action>,
+
+    /// Raw input for NLP parsing (when no subcommand is provided)
+    #[arg(required = false, trailing_var_arg = true)]
+    pub raw_input: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]

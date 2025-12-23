@@ -22,6 +22,29 @@ brew install tascli
 
 Tasks and records are stored in `~/.local/share/tascli/tascli.db` (configurable) with `rusqlite`.
 
+**New: Natural Language Interface (Default)**
+
+tascli now supports natural language input by default! You can simply type commands in plain English:
+
+```bash
+# Create tasks naturally
+tascli add task to review PRs today
+tascli create a task for buying milk tomorrow
+tascli remind me to call mom on friday
+
+# List and search
+tascli show my work tasks
+tascli what tasks are due today
+tascli display all overdue tasks
+
+# Complete tasks
+tascli complete task 1
+tascli mark task 2 as done
+tascli finish the first task
+```
+
+Traditional commands continue to work exactly as before. The system automatically detects traditional command syntax and routes appropriately.
+
 ### Tasks
 
 Create tasks with deadlines:
@@ -183,6 +206,43 @@ If storing the db file in location other than `~/.local/share/tascli/tascli.db` 
 ```
 
 at `~/.config/tascli/config.json` to adjust the location of the stored file. Note, if you already have existing tasks, you may want to move/copy the db file there first.
+
+#### NLP Configuration
+
+The natural language feature is opt-in by default and requires an OpenAI API key. To enable:
+
+```bash
+# Set your OpenAI API key
+tascli nlp config set-key sk-your-api-key-here
+
+# Enable NLP (if disabled)
+tascli nlp config enable
+
+# Check NLP configuration status
+tascli nlp config show
+```
+
+**Disable NLP mode:**
+
+If you prefer to use only traditional commands, you can:
+1. Disable NLP entirely: `tascli nlp config disable`
+2. Or force traditional parsing for a single command: `tascli --no-nlp task "example" today`
+
+**NLP Configuration Options:**
+
+- `enable` - Enable NLP functionality
+- `disable` - Disable NLP functionality
+- `set-key <api_key>` - Set OpenAI API key
+- `show` - Show current NLP configuration
+- `enable-preview` - Show command preview before execution
+- `disable-preview` - Disable command preview
+- `enable-auto-confirm` - Auto-confirm preview (skip prompt)
+- `disable-auto-confirm` - Require confirmation before execution
+- `enable-transparency` - Show NLP interpretation details
+- `disable-transparency` - Hide NLP interpretation details
+- `patterns` - Show available natural language patterns
+- `suggest <input>` - Get suggestions for partial input
+- `interactive` - Enter interactive mode for multi-step conversations
 
 ### Help
 
