@@ -51,11 +51,28 @@
   - Implemented FuzzyMatcher using Levenshtein distance
   - Supports category and task name matching with configurable threshold
   - Integrated with NLPParser context-aware parsing
-- [ ] Build intelligent deadline inference
+- [x] Build intelligent deadline inference ✅
+  - Created DeadlineInference module with temporal expression parser
+  - Supports relative dates (today, tomorrow, next week), day names, and date patterns
+  - Automatic deadline detection from natural language task descriptions
+  - Integrated with context-aware parsing for accurate deadline assignment
 
 ### Advanced Parsing
-- [ ] Handle complex queries ("show all overdue work tasks")
-- [ ] Implement relative time parsing ("in 2 hours", "next week")
+- [x] Handle complex queries ("show all overdue work tasks") ✅
+  - Added QueryType enum with 9 variants (Overdue, Upcoming, Unscheduled, DueToday, DueTomorrow, DueThisWeek, DueThisMonth, Urgent, All)
+  - Updated NLPCommand with query_type field
+  - Updated OpenAI function schema to include query_type parameter
+  - Enhanced system prompts with complex query examples
+  - Updated CommandMapper with proper CLI flag mappings for each query type
+  - Added comprehensive tests for all query types
+- [x] Implement relative time parsing ("in 2 hours", "next week") ✅
+  - Updated format_relative_deadline() to output tascli-compatible formats
+  - +Xd for days (e.g., +7d for 7 days from now)
+  - HH:MM for hours (e.g., 14:30 for 2 hours from now)
+  - "today HH:MM" for minutes/seconds
+  - Added regex patterns for "next <weekday>" and "for <weekday>"
+  - Updated system prompts with relative time examples
+  - Added 18 new tests (8 context.rs + 10 natural_language_patterns_tests.rs)
 - [ ] Add support for compound commands
 - [ ] Create disambiguation for ambiguous inputs
 
@@ -107,8 +124,8 @@
 
 ## Implementation Status
 
-### Current Task: Phase 2 - Context Awareness
-**Next Action**: Build intelligent deadline inference
+### Current Task: Phase 2 - Advanced Parsing
+**Next Action**: Add support for compound commands
 
 ### Completed Tasks ✅
 - Project analysis and architecture design
@@ -131,6 +148,24 @@
   - OpenAI client context support
   - 48 new tests (43 context.rs + 5 parser.rs)
   - All 527 tests passing
+- ✅ Phase 2 Deadline Inference
+  - DeadlineInference module with temporal expression parsing
+  - Support for relative dates, day names, date patterns
+  - Automatic deadline detection from task descriptions
+  - Context-aware integration for accurate assignment
+- ✅ Phase 2 Complex Query Handling
+  - QueryType enum with 9 variants for filtering tasks
+  - Enhanced NLPCommand with query_type field
+  - Updated OpenAI function schema and system prompts
+  - CommandMapper mappings for all query types
+  - Comprehensive test coverage
+- ✅ Phase 2 Relative Time Parsing
+  - format_relative_deadline() outputs tascli-compatible formats
+  - +Xd for days, HH:MM for hours, "today HH:MM" for minutes/seconds
+  - Regex patterns for "next <weekday>" and "for <weekday>"
+  - Updated system prompts with relative time examples
+  - 18 new tests (8 context.rs + 10 natural_language_patterns_tests.rs)
+  - All 621 tests passing (Commit a2e708d)
 
 ### Key Decisions Made
 - Use OpenAI Responses API with gpt-5-nano
