@@ -78,6 +78,69 @@ pub struct NLPCommand {
     pub days: Option<i32>,
     /// Limit for listing results
     pub limit: Option<i32>,
+    /// For compound commands: additional commands to execute
+    pub compound_commands: Option<Vec<NLPCommand>>,
+}
+
+/// Represents a compound command with multiple operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompoundCommand {
+    /// The primary/first command
+    pub primary: NLPCommand,
+    /// Additional commands to execute
+    pub secondary: Vec<NLPCommand>,
+    /// How commands should be executed
+    pub execution_mode: CompoundExecutionMode,
+}
+
+/// Execution mode for compound commands
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CompoundExecutionMode {
+    /// Execute all commands sequentially
+    Sequential,
+    /// Execute all commands in parallel (independent)
+    Parallel,
+    /// Execute with dependency resolution
+    Dependent,
+}
+
+impl NLPCommand {
+    /// Check if this command has compound commands
+    pub fn is_compound(&self) -> bool {
+        self.compound_commands.as_ref().map_or(false, |v| !v.is_empty())
+    }
+
+    /// Get all compound commands if present
+    pub fn compound(&self) -> Option<&[NLPCommand]> {
+        self.compound_commands.as_deref()
+    }
+
+    /// Convert to a CompoundCommand structure
+    pub fn to_compound(self) -> Option<CompoundCommand> {
+        if self.is_compound() {
+            Some(CompoundCommand {
+                primary: NLPCommand {
+                    compound_commands: None,
+                    ..self.clone()
+                },
+                secondary: self.compound_commands.unwrap_or_default(),
+                execution_mode: CompoundExecutionMode::Sequential,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Add a compound command
+    pub fn add_compound_command(&mut self, command: NLPCommand) {
+        if self.compound_commands.is_none() {
+            self.compound_commands = Some(Vec::new());
+        }
+        if let Some(ref mut commands) = self.compound_commands {
+            commands.push(command);
+        }
+    }
 }
 
 impl Default for NLPCommand {
@@ -95,7 +158,54 @@ impl Default for NLPCommand {
             modifications: HashMap::new(),
             days: None,
             limit: None,
+            compound_commands: None,
         }
+    }
+}
+
+impl Default for CompoundExecutionMode {
+    fn default() -> Self {
+        Self::Sequential
+    }
+}
+
+impl CompoundCommand {
+    /// Create a new compound command from a primary command
+    pub fn new(primary: NLPCommand) -> Self {
+        Self {
+            primary,
+            secondary: Vec::new(),
+            execution_mode: CompoundExecutionMode::Sequential,
+        }
+    }
+
+    /// Add a secondary command
+    pub fn add_command(mut self, command: NLPCommand) -> Self {
+        self.secondary.push(command);
+        self
+    }
+
+    /// Set the execution mode
+    pub fn with_execution_mode(mut self, mode: CompoundExecutionMode) -> Self {
+        self.execution_mode = mode;
+        self
+    }
+
+    /// Get all commands in execution order
+    pub fn all_commands(&self) -> Vec<&NLPCommand> {
+        let mut commands = vec![&self.primary];
+        commands.extend(self.secondary.iter());
+        commands
+    }
+
+    /// Check if this is a compound command (has secondary commands)
+    pub fn is_compound(&self) -> bool {
+        !self.secondary.is_empty()
+    }
+
+    /// Count total number of commands
+    pub fn command_count(&self) -> usize {
+        1 + self.secondary.len()
     }
 }
 
@@ -273,6 +383,7 @@ mod tests {
         assert!(cmd.modifications.is_empty());
         assert!(cmd.days.is_none());
         assert!(cmd.limit.is_none());
+        assert!(cmd.compound_commands.is_none());
     }
 
     #[test]
@@ -307,6 +418,7 @@ mod tests {
             modifications,
             days: Some(7),
             limit: Some(10),
+            compound_commands: None,
         };
 
         assert_eq!(cmd.action, ActionType::Update);
@@ -705,5 +817,230 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cmd.limit, Some(0));
+    }
+
+    // === Compound Command Tests ===
+
+    #[test]
+    fn test_nlp_command_not_compound_by_default() {
+        let cmd = NLPCommand::default();
+        assert!(!cmd.is_compound());
+        assert!(cmd.compound().is_none());
+        assert!(cmd.to_compound().is_none());
+    }
+
+    #[test]
+    fn test_nlp_command_is_compound() {
+        let mut cmd = NLPCommand::default();
+        cmd.add_compound_command(NLPCommand {
+            action: ActionType::Done,
+            content: "secondary task".to_string(),
+            ..Default::default()
+        });
+        assert!(cmd.is_compound());
+        assert!(cmd.compound().is_some());
+        assert_eq!(cmd.compound().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_nlp_command_add_multiple_compound() {
+        let mut cmd = NLPCommand {
+            action: ActionType::Task,
+            content: "primary task".to_string(),
+            ..Default::default()
+        };
+        cmd.add_compound_command(NLPCommand {
+            action: ActionType::Done,
+            content: "task 2".to_string(),
+            ..Default::default()
+        });
+        cmd.add_compound_command(NLPCommand {
+            action: ActionType::Delete,
+            content: "task 3".to_string(),
+            ..Default::default()
+        });
+        assert!(cmd.is_compound());
+        assert_eq!(cmd.compound().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_compound_execution_mode_default() {
+        let mode = CompoundExecutionMode::default();
+        assert_eq!(mode, CompoundExecutionMode::Sequential);
+    }
+
+    #[test]
+    fn test_compound_execution_mode_equality() {
+        assert_eq!(CompoundExecutionMode::Sequential, CompoundExecutionMode::Sequential);
+        assert_ne!(CompoundExecutionMode::Sequential, CompoundExecutionMode::Parallel);
+        assert_ne!(CompoundExecutionMode::Parallel, CompoundExecutionMode::Dependent);
+    }
+
+    #[test]
+    fn test_compound_command_new() {
+        let primary = NLPCommand {
+            action: ActionType::Task,
+            content: "main task".to_string(),
+            ..Default::default()
+        };
+        let compound = CompoundCommand::new(primary.clone());
+        assert!(!compound.is_compound());
+        assert_eq!(compound.command_count(), 1);
+        assert_eq!(compound.primary.action, ActionType::Task);
+    }
+
+    #[test]
+    fn test_compound_command_add_secondary() {
+        let primary = NLPCommand {
+            action: ActionType::Task,
+            content: "main task".to_string(),
+            ..Default::default()
+        };
+        let compound = CompoundCommand::new(primary)
+            .add_command(NLPCommand {
+                action: ActionType::Done,
+                content: "secondary".to_string(),
+                ..Default::default()
+            });
+        assert!(compound.is_compound());
+        assert_eq!(compound.command_count(), 2);
+        assert_eq!(compound.secondary.len(), 1);
+    }
+
+    #[test]
+    fn test_compound_command_all_commands() {
+        let primary = NLPCommand {
+            action: ActionType::Task,
+            content: "main".to_string(),
+            ..Default::default()
+        };
+        let compound = CompoundCommand::new(primary)
+            .add_command(NLPCommand {
+                action: ActionType::Done,
+                content: "done cmd".to_string(),
+                ..Default::default()
+            })
+            .add_command(NLPCommand {
+                action: ActionType::List,
+                content: "list cmd".to_string(),
+                ..Default::default()
+            });
+        let all = compound.all_commands();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].action, ActionType::Task);
+        assert_eq!(all[1].action, ActionType::Done);
+        assert_eq!(all[2].action, ActionType::List);
+    }
+
+    #[test]
+    fn test_compound_command_with_execution_mode() {
+        let primary = NLPCommand::default();
+        let compound = CompoundCommand::new(primary)
+            .with_execution_mode(CompoundExecutionMode::Parallel);
+        assert_eq!(compound.execution_mode, CompoundExecutionMode::Parallel);
+    }
+
+    #[test]
+    fn test_nlp_command_to_compound() {
+        let mut cmd = NLPCommand {
+            action: ActionType::Task,
+            content: "primary".to_string(),
+            ..Default::default()
+        };
+        cmd.add_compound_command(NLPCommand {
+            action: ActionType::Done,
+            content: "secondary".to_string(),
+            ..Default::default()
+        });
+
+        let compound = cmd.to_compound();
+        assert!(compound.is_some());
+        let c = compound.unwrap();
+        assert_eq!(c.primary.content, "primary");
+        assert_eq!(c.secondary.len(), 1);
+        assert_eq!(c.secondary[0].content, "secondary");
+    }
+
+    #[test]
+    fn test_nlp_command_to_compound_when_not_compound() {
+        let cmd = NLPCommand {
+            action: ActionType::Task,
+            content: "single".to_string(),
+            ..Default::default()
+        };
+        assert!(cmd.to_compound().is_none());
+    }
+
+    // === Serialization for Compound Commands ===
+
+    #[test]
+    fn test_compound_execution_mode_serialize() {
+        let mode = CompoundExecutionMode::Sequential;
+        let json = serde_json::to_string(&mode).unwrap();
+        assert_eq!(json, "\"sequential\"");
+    }
+
+    #[test]
+    fn test_compound_execution_mode_deserialize() {
+        let json = "\"parallel\"";
+        let mode: CompoundExecutionMode = serde_json::from_str(json).unwrap();
+        assert_eq!(mode, CompoundExecutionMode::Parallel);
+    }
+
+    #[test]
+    fn test_nlp_command_with_compound_serialize() {
+        let mut cmd = NLPCommand {
+            action: ActionType::Task,
+            content: "main".to_string(),
+            ..Default::default()
+        };
+        cmd.add_compound_command(NLPCommand {
+            action: ActionType::Done,
+            content: "secondary".to_string(),
+            ..Default::default()
+        });
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("compound_commands"));
+        assert!(json.contains("secondary"));
+    }
+
+    #[test]
+    fn test_nlp_command_with_compound_deserialize() {
+        let json = r#"{"action":"task","content":"main","category":null,"deadline":null,"schedule":null,"status":null,"query_type":null,"search":null,"filters":{},"modifications":{},"days":null,"limit":null,"compound_commands":[{"action":"done","content":"secondary","category":null,"deadline":null,"schedule":null,"status":null,"query_type":null,"search":null,"filters":{},"modifications":{},"days":null,"limit":null,"compound_commands":null}]}"#;
+        let cmd: NLPCommand = serde_json::from_str(json).unwrap();
+        assert!(cmd.is_compound());
+        assert_eq!(cmd.compound().unwrap().len(), 1);
+        assert_eq!(cmd.compound().unwrap()[0].action, ActionType::Done);
+    }
+
+    #[test]
+    fn test_compound_command_serialize() {
+        let primary = NLPCommand {
+            action: ActionType::Task,
+            content: "main".to_string(),
+            ..Default::default()
+        };
+        let compound = CompoundCommand::new(primary)
+            .add_command(NLPCommand {
+                action: ActionType::Done,
+                content: "done".to_string(),
+                ..Default::default()
+            });
+
+        let json = serde_json::to_string(&compound).unwrap();
+        assert!(json.contains("primary"));
+        assert!(json.contains("secondary"));
+        assert!(json.contains("execution_mode"));
+    }
+
+    #[test]
+    fn test_compound_command_deserialize() {
+        let json = r#"{"primary":{"action":"task","content":"main","category":null,"deadline":null,"schedule":null,"status":null,"query_type":null,"search":null,"filters":{},"modifications":{},"days":null,"limit":null,"compound_commands":null},"secondary":[{"action":"done","content":"done","category":null,"deadline":null,"schedule":null,"status":null,"query_type":null,"search":null,"filters":{},"modifications":{},"days":null,"limit":null,"compound_commands":null}],"execution_mode":"sequential"}"#;
+        let compound: CompoundCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(compound.primary.content, "main");
+        assert_eq!(compound.secondary.len(), 1);
+        assert_eq!(compound.secondary[0].action, ActionType::Done);
+        assert_eq!(compound.execution_mode, CompoundExecutionMode::Sequential);
     }
 }

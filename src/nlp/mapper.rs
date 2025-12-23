@@ -304,6 +304,46 @@ impl CommandMapper {
             },
         }
     }
+
+    /// Convert a compound command to multiple sets of CLI arguments
+    pub fn to_compound_args(command: &NLPCommand) -> Vec<Vec<String>> {
+        let mut results = vec![Self::to_tascli_args(command)];
+
+        if let Some(ref compound) = command.compound_commands {
+            for cmd in compound {
+                results.push(Self::to_tascli_args(cmd));
+            }
+        }
+
+        results
+    }
+
+    /// Generate a human-readable description of a compound command
+    pub fn describe_compound_command(command: &NLPCommand) -> String {
+        if !command.is_compound() {
+            return Self::describe_command(command);
+        }
+
+        let mut descriptions = vec![Self::describe_command(command)];
+        if let Some(ref compound) = command.compound_commands {
+            for cmd in compound {
+                descriptions.push(Self::describe_command(cmd));
+            }
+        }
+
+        // Join descriptions with "and then"
+        descriptions.join(", then ")
+    }
+
+    /// Check if a command is compound
+    pub fn is_compound(command: &NLPCommand) -> bool {
+        command.is_compound()
+    }
+
+    /// Get the number of commands in a compound command
+    pub fn command_count(command: &NLPCommand) -> usize {
+        1 + command.compound_commands.as_ref().map_or(0, |v| v.len())
+    }
 }
 
 #[cfg(test)]
@@ -1180,5 +1220,168 @@ mod tests {
 
         let args = CommandMapper::to_tascli_args(&command);
         assert_eq!(args, vec!["list", "task", "-s", "suspended"]);
+    }
+
+    // === Compound Command Mapping Tests ===
+
+    #[test]
+    fn test_is_compound_simple() {
+        let command = NLPCommand {
+            action: ActionType::Task,
+            content: "simple task".to_string(),
+            ..Default::default()
+        };
+        assert!(!CommandMapper::is_compound(&command));
+    }
+
+    #[test]
+    fn test_is_compound_with_secondary() {
+        let mut command = NLPCommand {
+            action: ActionType::Task,
+            content: "primary task".to_string(),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Done,
+            content: "secondary".to_string(),
+            ..Default::default()
+        });
+        assert!(CommandMapper::is_compound(&command));
+    }
+
+    #[test]
+    fn test_command_count_simple() {
+        let command = NLPCommand {
+            action: ActionType::Task,
+            content: "simple".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(CommandMapper::command_count(&command), 1);
+    }
+
+    #[test]
+    fn test_command_count_compound() {
+        let mut command = NLPCommand {
+            action: ActionType::Task,
+            content: "primary".to_string(),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Done,
+            content: "second".to_string(),
+            ..Default::default()
+        });
+        command.add_compound_command(NLPCommand {
+            action: ActionType::List,
+            content: "third".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(CommandMapper::command_count(&command), 3);
+    }
+
+    #[test]
+    fn test_to_compound_args_simple() {
+        let command = NLPCommand {
+            action: ActionType::Task,
+            content: "simple".to_string(),
+            ..Default::default()
+        };
+        let results = CommandMapper::to_compound_args(&command);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], vec!["task", "simple"]);
+    }
+
+    #[test]
+    fn test_to_compound_args_two_commands() {
+        let mut command = NLPCommand {
+            action: ActionType::Task,
+            content: "Review PR".to_string(),
+            category: Some("work".to_string()),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Update,
+            content: "Review PR".to_string(),
+            ..Default::default()
+        });
+
+        let results = CommandMapper::to_compound_args(&command);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], vec!["task", "-c", "work", "Review PR"]);
+        assert_eq!(results[1], vec!["update", "Review PR"]);
+    }
+
+    #[test]
+    fn test_to_compound_args_three_commands() {
+        let mut command = NLPCommand {
+            action: ActionType::Done,
+            content: "5".to_string(),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Update,
+            content: "5".to_string(),
+            ..Default::default()
+        });
+        command.add_compound_command(NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            ..Default::default()
+        });
+
+        let results = CommandMapper::to_compound_args(&command);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0], vec!["done", "5"]);
+        assert_eq!(results[1], vec!["update", "5"]);
+        assert_eq!(results[2], vec!["list", "task"]);
+    }
+
+    #[test]
+    fn test_describe_compound_command_simple() {
+        let command = NLPCommand {
+            action: ActionType::Task,
+            content: "simple".to_string(),
+            ..Default::default()
+        };
+        let desc = CommandMapper::describe_compound_command(&command);
+        assert_eq!(desc, "Create task: simple");
+    }
+
+    #[test]
+    fn test_describe_compound_command_compound() {
+        let mut command = NLPCommand {
+            action: ActionType::Task,
+            content: "Review PR".to_string(),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Update,
+            content: "Review PR".to_string(),
+            ..Default::default()
+        });
+
+        let desc = CommandMapper::describe_compound_command(&command);
+        assert!(desc.contains("Create task: Review PR"));
+        assert!(desc.contains("Update: Review PR"));
+        assert!(desc.contains(", then"));
+    }
+
+    #[test]
+    fn test_describe_compound_command_multiple() {
+        let mut command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Overdue),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Record,
+            content: "Generated report".to_string(),
+            ..Default::default()
+        });
+
+        let desc = CommandMapper::describe_compound_command(&command);
+        assert!(desc.contains("overdue"));
+        assert!(desc.contains("Create record: Generated report"));
     }
 }

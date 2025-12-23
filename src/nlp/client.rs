@@ -75,7 +75,7 @@ impl OpenAIClient {
             "type": "function",
             "function": {
                 "name": "parse_task_command",
-                "description": "Parse natural language into tascli command structure",
+                "description": "Parse natural language into tascli command structure. Supports compound commands with multiple actions.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -131,6 +131,30 @@ impl OpenAIClient {
                                 "deadline": {"type": "string"},
                                 "status": {"type": "string"}
                             }
+                        },
+                        "compound_commands": {
+                            "type": "array",
+                            "description": "Additional commands to execute as part of a compound command (e.g., 'create task and mark as high priority')",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": ["task", "record", "done", "update", "delete", "list"]
+                                    },
+                                    "content": {"type": "string"},
+                                    "category": {"type": "string"},
+                                    "deadline": {"type": "string"},
+                                    "schedule": {"type": "string"},
+                                    "status": {"type": "string"},
+                                    "query_type": {"type": "string"},
+                                    "search": {"type": "string"},
+                                    "days": {"type": "integer"},
+                                    "limit": {"type": "integer"},
+                                    "modifications": {"type": "object"}
+                                },
+                                "required": ["action"]
+                            }
                         }
                     },
                     "required": ["action", "content"]
@@ -160,7 +184,13 @@ Rules:
    - "due_this_week": tasks due this week
    - "due_this_month": tasks due this month
    - "urgent": high-priority or overdue tasks
-6. If the user's intent is unclear, make reasonable assumptions based on context
+6. For compound commands (multiple actions in one input), use the compound_commands array
+7. If the user's intent is unclear, make reasonable assumptions based on context
+
+Compound Command Examples:
+- "Create task 'Review PR' and mark as high priority" → action: "task", content: "Review PR", compound_commands: [{action: "update", content: "Review PR", modifications: {priority: "high"}}]
+- "Show all overdue tasks and create a report" → action: "list", content: "tasks", query_type: "overdue", compound_commands: [{action: "record", content: "Generated overdue task report"}]
+- "Complete task 5 and archive it" → action: "done", content: "5", compound_commands: [{action: "update", content: "5", modifications: {archived: "true"}}]
 
 Examples:
 - "add a task for today to cleanup the trash" → action: "task", content: "cleanup the trash", deadline: "today"
@@ -355,6 +385,11 @@ Examples:
 - "mark the cleanup task as done" → action: "done", content: "cleanup"
 - "create daily task to write journal" → action: "task", content: "write journal", schedule: "daily"
 
+Compound Command Examples:
+- "Create task 'Review PR' and mark as high priority" → action: "task", content: "Review PR", compound_commands: [{action: "update", content: "Review PR", modifications: {priority: "high"}}]
+- "Show all overdue tasks and create a report" → action: "list", content: "tasks", query_type: "overdue", compound_commands: [{action: "record", content: "Generated overdue task report"}]
+- "Complete task 5 and archive it" → action: "done", content: "5", compound_commands: [{action: "update", content: "5", modifications: {archived: "true"}}]
+
 For follow-up commands, use context:
 - "change the category to work" → if last task mentioned, use that as content, set category to "work"
 - "when is it due?" → infer this is about the last mentioned task
@@ -364,7 +399,7 @@ For follow-up commands, use context:
             "type": "function",
             "function": {
                 "name": "parse_task_command",
-                "description": "Parse natural language into tascli command structure",
+                "description": "Parse natural language into tascli command structure. Supports compound commands with multiple actions.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -419,6 +454,30 @@ For follow-up commands, use context:
                                 "category": {"type": "string"},
                                 "deadline": {"type": "string"},
                                 "status": {"type": "string"}
+                            }
+                        },
+                        "compound_commands": {
+                            "type": "array",
+                            "description": "Additional commands to execute as part of a compound command (e.g., 'create task and mark as high priority')",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": ["task", "record", "done", "update", "delete", "list"]
+                                    },
+                                    "content": {"type": "string"},
+                                    "category": {"type": "string"},
+                                    "deadline": {"type": "string"},
+                                    "schedule": {"type": "string"},
+                                    "status": {"type": "string"},
+                                    "query_type": {"type": "string"},
+                                    "search": {"type": "string"},
+                                    "days": {"type": "integer"},
+                                    "limit": {"type": "integer"},
+                                    "modifications": {"type": "object"}
+                                },
+                                "required": ["action"]
                             }
                         }
                     },

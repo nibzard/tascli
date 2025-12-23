@@ -44,38 +44,92 @@ pub fn handle_nlp_command(conn: &Connection, cmd: &NLPCommand) -> Result<(), Str
         // Create parser
         let parser = NLPParser::new(nlp_config.clone());
 
-        // Parse the natural language command
-        match parser.parse_with_fallback(&cmd.description).await {
-            Ok((args, description)) => {
-                // Show the interpreted command if requested
-                if cmd.show {
-                    print_green(&format!("Interpreted: {}", description));
-                    print_yellow(&format!("Command: {}", args.join(" ")));
+        // Parse the natural language command, checking for compound commands
+        match parser.parse_to_compound_args(&cmd.description).await {
+            Ok((all_args, description)) => {
+                // Check if this is a compound command
+                if all_args.len() > 1 {
+                    // Handle compound command
+                    handle_compound_command(conn, &all_args, &description, cmd.show)
+                } else {
+                    // Handle single command
+                    // Show the interpreted command if requested
+                    if cmd.show {
+                        print_green(&format!("Interpreted: {}", description));
+                        print_yellow(&format!("Command: {}", all_args[0].join(" ")));
 
-                    // Ask for confirmation
-                    print_yellow("Execute this command? [Y/n] ");
+                        // Ask for confirmation
+                        print_yellow("Execute this command? [Y/n] ");
 
-                    let mut input = String::new();
-                    std::io::stdin().read_line(&mut input)
-                        .map_err(|e| format!("Failed to read input: {}", e))?;
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)
+                            .map_err(|e| format!("Failed to read input: {}", e))?;
 
-                    let input = input.trim().to_lowercase();
-                    if !input.is_empty() && input != "y" && input != "yes" {
-                        print_yellow("Command cancelled.");
-                        return Ok(());
+                        let input = input.trim().to_lowercase();
+                        if !input.is_empty() && input != "y" && input != "yes" {
+                            print_yellow("Command cancelled.");
+                            return Ok(());
+                        }
                     }
-                }
 
-                // Execute the interpreted command
-                execute_parsed_command(conn, &args)
+                    // Execute the interpreted command
+                    execute_parsed_command(conn, &all_args[0])
+                }
             },
             Err(e) => {
                 print_red(&format!("Failed to parse natural language command: {}", e));
                 print_yellow("Try rephrasing your command or use traditional tascli commands.");
-                Err(e)
+                Err(e.to_string())
             }
         }
     })
+}
+
+/// Handle compound commands (multiple commands in one input)
+fn handle_compound_command(
+    conn: &Connection,
+    all_args: &[Vec<String>],
+    description: &str,
+    show: bool,
+) -> Result<(), String> {
+    print_green(&format!("Interpreted compound command: {}", description));
+
+    if show {
+        for (i, args) in all_args.iter().enumerate() {
+            print_yellow(&format!("  {}. {}", i + 1, args.join(" ")));
+        }
+
+        print_yellow("Execute these commands? [Y/n] ");
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)
+            .map_err(|e| format!("Failed to read input: {}", e))?;
+
+        let input = input.trim().to_lowercase();
+        if !input.is_empty() && input != "y" && input != "yes" {
+            print_yellow("Commands cancelled.");
+            return Ok(());
+        }
+    }
+
+    // Execute each command sequentially
+    let mut results = Vec::new();
+    for (i, args) in all_args.iter().enumerate() {
+        print_green(&format!("Executing command {}/{}...", i + 1, all_args.len()));
+        match execute_parsed_command(conn, args) {
+            Ok(()) => results.push(format!("Command {}: Success", i + 1)),
+            Err(e) => {
+                let err_msg = format!("Command {}: Failed - {}", i + 1, e);
+                print_red(&err_msg);
+                results.push(err_msg);
+                // Continue executing remaining commands
+            }
+        }
+    }
+
+    // Print summary
+    print_green(&format!("Compound command complete. Executed {} command(s).", all_args.len()));
+    Ok(())
 }
 
 fn handle_nlp_config(config_cmd: &NLPConfigCommand) -> Result<(), String> {

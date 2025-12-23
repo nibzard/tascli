@@ -117,6 +117,35 @@ impl NLPParser {
         Ok((args, description))
     }
 
+    /// Parse natural language input, handling compound commands
+    /// Returns all commands if this is a compound command
+    pub async fn parse_compound(&self, input: &str) -> NLPResult<(Vec<NLPCommand>, String)> {
+        let command = self.parse(input).await?;
+
+        if command.is_compound() {
+            let mut all_commands = vec![command.clone()];
+            if let Some(ref compound) = command.compound_commands {
+                for cmd in compound {
+                    all_commands.push(cmd.clone());
+                }
+            }
+            let description = CommandMapper::describe_compound_command(&command);
+            Ok((all_commands, description))
+        } else {
+            let description = CommandMapper::describe_command(&command);
+            Ok((vec![command], description))
+        }
+    }
+
+    /// Parse natural language input to multiple argument sets for compound commands
+    pub async fn parse_to_compound_args(&self, input: &str) -> NLPResult<(Vec<Vec<String>>, String)> {
+        let command = self.parse(input).await?;
+        let all_args = CommandMapper::to_compound_args(&command);
+        let description = CommandMapper::describe_compound_command(&command);
+
+        Ok((all_args, description))
+    }
+
     /// Get cached command if available and not expired
     async fn get_cached_command(&self, input: &str) -> Option<NLPCommand> {
         let mut cache = self.cache.lock().await;
@@ -723,5 +752,111 @@ mod tests {
         assert_eq!(retrieved_state.known_categories.len(), 2);
         assert_eq!(retrieved_state.recent_tasks.len(), 2);
         assert_eq!(retrieved_state.max_history_size, 100);
+    }
+
+    // === Compound Command Tests ===
+
+    #[tokio::test]
+    async fn test_parse_compound_simple() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        // Create a simple non-compound command manually
+        let command = NLPCommand {
+            action: ActionType::Task,
+            content: "simple task".to_string(),
+            ..Default::default()
+        };
+
+        // Simulate parsing by directly testing the result structure
+        let result = if command.is_compound() {
+            let mut all_commands = vec![command.clone()];
+            if let Some(ref compound) = command.compound_commands {
+                for cmd in compound {
+                    all_commands.push(cmd.clone());
+                }
+            }
+            all_commands
+        } else {
+            vec![command]
+        };
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].action, ActionType::Task);
+    }
+
+    #[tokio::test]
+    async fn test_parse_compound_with_secondary() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        // Create a compound command manually
+        let mut command = NLPCommand {
+            action: ActionType::Task,
+            content: "Review PR".to_string(),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Update,
+            content: "Review PR".to_string(),
+            ..Default::default()
+        });
+
+        // Simulate compound parsing
+        let result = if command.is_compound() {
+            let mut all_commands = vec![command.clone()];
+            if let Some(ref compound) = command.compound_commands {
+                for cmd in compound {
+                    all_commands.push(cmd.clone());
+                }
+            }
+            all_commands
+        } else {
+            vec![command]
+        };
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].action, ActionType::Task);
+        assert_eq!(result[1].action, ActionType::Update);
+    }
+
+    #[tokio::test]
+    async fn test_parse_to_compound_args_simple() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        let command = NLPCommand {
+            action: ActionType::Task,
+            content: "simple".to_string(),
+            ..Default::default()
+        };
+
+        let all_args = CommandMapper::to_compound_args(&command);
+        assert_eq!(all_args.len(), 1);
+        assert_eq!(all_args[0], vec!["task", "simple"]);
+    }
+
+    #[tokio::test]
+    async fn test_parse_to_compound_args_with_secondary() {
+        let parser = NLPParser::new(NLPConfig::default());
+
+        let mut command = NLPCommand {
+            action: ActionType::Done,
+            content: "5".to_string(),
+            ..Default::default()
+        };
+        command.add_compound_command(NLPCommand {
+            action: ActionType::Update,
+            content: "5".to_string(),
+            ..Default::default()
+        });
+        command.add_compound_command(NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            ..Default::default()
+        });
+
+        let all_args = CommandMapper::to_compound_args(&command);
+        assert_eq!(all_args.len(), 3);
+        assert_eq!(all_args[0], vec!["done", "5"]);
+        assert_eq!(all_args[1], vec!["update", "5"]);
+        assert_eq!(all_args[2], vec!["list", "task"]);
     }
 }
