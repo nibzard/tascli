@@ -2,6 +2,7 @@ mod actions;
 mod args;
 mod config;
 mod db;
+mod nlp;
 
 use std::process::exit;
 

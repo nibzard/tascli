@@ -31,6 +31,8 @@ pub enum Action {
     /// list tasks or records
     #[command(subcommand)]
     List(ListCommand),
+    /// use natural language to create commands
+    NLP(NLPCommand),
 }
 
 #[derive(Debug, Args)]
@@ -184,6 +186,35 @@ pub struct ShowContentCommand {
     /// index from previous list command
     #[arg(value_parser = validate_index)]
     pub index: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct NLPCommand {
+    /// natural language command description
+    pub description: String,
+    /// show the interpreted command before executing
+    #[arg(short, long, default_value_t = false)]
+    pub show: bool,
+    /// configuration commands for NLP
+    #[command(subcommand)]
+    pub config: Option<NLPConfigCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NLPConfigCommand {
+    /// enable NLP functionality
+    Enable,
+    /// disable NLP functionality
+    Disable,
+    /// set OpenAI API key
+    SetKey {
+        /// OpenAI API key
+        api_key: String,
+    },
+    /// show current NLP configuration
+    Show,
+    /// clear NLP cache
+    ClearCache,
 }
 
 fn syntax_helper(cmd: &str, s: &str) -> Result<String, String> {

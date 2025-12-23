@@ -23,6 +23,14 @@ pub fn print_red(text: &str) {
     println!("\x1b[91m{}\x1b[0m", text);
 }
 
+pub fn print_green(text: &str) {
+    println!("\x1b[92m{}\x1b[0m", text);
+}
+
+pub fn print_yellow(text: &str) {
+    println!("\x1b[93m{}\x1b[0m", text);
+}
+
 // print items in a table.
 pub fn print_items(items: &[Item], is_record: bool, is_list: bool) {
     let mut results: Vec<DisplayRow> = Vec::with_capacity(items.len());

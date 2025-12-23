@@ -1,0 +1,16 @@
+//! Natural Language Processing module for tascli
+//!
+//! This module provides natural language parsing capabilities using OpenAI's Responses API,
+//! allowing users to interact with tascli using natural language commands.
+
+pub mod client;
+pub mod parser;
+pub mod mapper;
+pub mod validator;
+pub mod types;
+
+pub use client::OpenAIClient;
+pub use types::*;
+pub use parser::NLPParser;
+pub use mapper::CommandMapper;
+pub use validator::CommandValidator;

@@ -5,6 +5,7 @@ use crate::{
         addition,
         list,
         modify,
+        nlp,
     },
     args::parser::{
         Action,
@@ -25,5 +26,6 @@ pub fn handle_commands(conn: &Connection, args: CliArgs) -> Result<(), String> {
             ListCommand::Record(cmd) => list::handle_listrecords(conn, cmd),
             ListCommand::Show(cmd) => list::handle_showcontent(conn, cmd),
         },
+        Action::NLP(cmd) => nlp::handle_nlp_command(conn, &cmd),
     }
 }

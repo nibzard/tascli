@@ -3,17 +3,63 @@ use std::{
     path::PathBuf,
 };
 
-use nanoserde::DeJson;
+use nanoserde::{DeJson, SerJson};
 
 const DB_NAME: &str = "tascli.db";
 const DEFAULT_DATA_DIR: &[&str] = &[".local", "share", "tascli"];
 const CONFIG_PATH: &[&str] = &[".config", "tascli", "config.json"];
 
-#[derive(Default, DeJson)]
+#[derive(Default, DeJson, SerJson)]
 pub struct Config {
     /// Only supports full path.
     #[nserde(default)]
     pub data_dir: String,
+    /// NLP configuration settings
+    #[nserde(default)]
+    pub nlp: NLPConfigSection,
+}
+
+#[derive(DeJson, SerJson)]
+pub struct NLPConfigSection {
+    /// Whether NLP is enabled
+    #[nserde(default)]
+    pub enabled: bool,
+    /// OpenAI API key
+    #[nserde(default)]
+    pub api_key: String,
+    /// Model to use (default: gpt-5-nano)
+    #[nserde(default)]
+    pub model: String,
+    /// Whether to fallback to traditional commands on error
+    #[nserde(default)]
+    pub fallback_to_traditional: bool,
+    /// Whether to cache command parses
+    #[nserde(default)]
+    pub cache_commands: bool,
+    /// Context window size for conversation
+    #[nserde(default)]
+    pub context_window: usize,
+    /// Maximum API calls per minute
+    #[nserde(default)]
+    pub max_api_calls_per_minute: u32,
+    /// API base URL (can be overridden for testing)
+    #[nserde(default)]
+    pub api_base_url: String,
+}
+
+impl Default for NLPConfigSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: String::new(),
+            model: "gpt-5-nano".to_string(),
+            fallback_to_traditional: true,
+            cache_commands: true,
+            context_window: 10,
+            max_api_calls_per_minute: 20,
+            api_base_url: "https://api.openai.com/v1".to_string(),
+        }
+    }
 }
 
 pub fn get_data_path() -> Result<PathBuf, String> {
@@ -61,6 +107,78 @@ fn str_to_pathbuf(dir_path: String) -> Result<PathBuf, String> {
     } else {
         Err(format!("data directory must be absolute or home relative, and start with '~' or '/', it cannot be {}", dir_path))
     }
+}
+
+/// Get the full configuration from the config file
+pub fn get_config() -> Result<Config, String> {
+    let home_dir = home::home_dir().ok_or_else(|| String::from("cannot find home directory"))?;
+    let config_path = CONFIG_PATH.iter().fold(home_dir, |p, d| p.join(d));
+
+    if !config_path.exists() {
+        // Return default config if file doesn't exist
+        return Ok(Config::default());
+    }
+
+    let config_content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let config: Config = DeJson::deserialize_json(&config_content)
+        .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+    Ok(config)
+}
+
+/// Save configuration to the config file
+pub fn save_config(config: &Config) -> Result<(), String> {
+    let home_dir = home::home_dir().ok_or_else(|| String::from("cannot find home directory"))?;
+    let config_path = CONFIG_PATH.iter().fold(home_dir, |p, d| p.join(d));
+
+    // Create config directory if it doesn't exist
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    let config_json = config.serialize_json();
+    fs::write(&config_path, config_json)
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    Ok(())
+}
+
+/// Get just the NLP configuration
+pub fn get_nlp_config() -> Result<crate::nlp::NLPConfig, String> {
+    let config = get_config()?;
+    let nlp_section = config.nlp;
+
+    Ok(crate::nlp::NLPConfig {
+        enabled: nlp_section.enabled,
+        api_key: if nlp_section.api_key.is_empty() { None } else { Some(nlp_section.api_key) },
+        model: nlp_section.model,
+        fallback_to_traditional: nlp_section.fallback_to_traditional,
+        cache_commands: nlp_section.cache_commands,
+        context_window: nlp_section.context_window,
+        max_api_calls_per_minute: nlp_section.max_api_calls_per_minute,
+        api_base_url: nlp_section.api_base_url,
+    })
+}
+
+/// Update NLP configuration
+pub fn update_nlp_config(nlp_config: &crate::nlp::NLPConfig) -> Result<(), String> {
+    let mut config = get_config()?;
+
+    config.nlp = NLPConfigSection {
+        enabled: nlp_config.enabled,
+        api_key: nlp_config.api_key.clone().unwrap_or_default(),
+        model: nlp_config.model.clone(),
+        fallback_to_traditional: nlp_config.fallback_to_traditional,
+        cache_commands: nlp_config.cache_commands,
+        context_window: nlp_config.context_window,
+        max_api_calls_per_minute: nlp_config.max_api_calls_per_minute,
+        api_base_url: nlp_config.api_base_url.clone(),
+    };
+
+    save_config(&config)
 }
 
 #[cfg(test)]
