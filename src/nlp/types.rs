@@ -30,6 +30,27 @@ pub enum StatusType {
     All,
 }
 
+/// Complex query types for advanced filtering
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryType {
+    /// Tasks with deadlines in the past that are not done
+    Overdue,
+    /// Tasks with deadlines coming up soon
+    Upcoming,
+    /// Tasks with no deadline
+    Unscheduled,
+    /// Tasks due within a specific timeframe
+    DueToday,
+    DueTomorrow,
+    DueThisWeek,
+    DueThisMonth,
+    /// High priority or urgent tasks
+    Urgent,
+    /// Tasks matching all specified criteria
+    All,
+}
+
 /// Main structure for parsed natural language commands
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NLPCommand {
@@ -45,6 +66,8 @@ pub struct NLPCommand {
     pub schedule: Option<String>,
     /// Optional status filter for listing
     pub status: Option<StatusType>,
+    /// Optional complex query type for advanced filtering
+    pub query_type: Option<QueryType>,
     /// Optional search terms
     pub search: Option<String>,
     /// Additional filters
@@ -66,6 +89,7 @@ impl Default for NLPCommand {
             deadline: None,
             schedule: None,
             status: None,
+            query_type: None,
             search: None,
             filters: HashMap::new(),
             modifications: HashMap::new(),
@@ -177,6 +201,30 @@ mod tests {
         assert_eq!(actions.len(), 6);
     }
 
+    // === QueryType Tests ===
+
+    #[test]
+    fn test_query_type_overdue() {
+        let qt = QueryType::Overdue;
+        assert_eq!(qt, QueryType::Overdue);
+    }
+
+    #[test]
+    fn test_query_type_all_variants() {
+        let types = vec![
+            QueryType::Overdue,
+            QueryType::Upcoming,
+            QueryType::Unscheduled,
+            QueryType::DueToday,
+            QueryType::DueTomorrow,
+            QueryType::DueThisWeek,
+            QueryType::DueThisMonth,
+            QueryType::Urgent,
+            QueryType::All,
+        ];
+        assert_eq!(types.len(), 9);
+    }
+
     // === StatusType Tests ===
 
     #[test]
@@ -219,6 +267,7 @@ mod tests {
         assert!(cmd.deadline.is_none());
         assert!(cmd.schedule.is_none());
         assert!(cmd.status.is_none());
+        assert!(cmd.query_type.is_none());
         assert!(cmd.search.is_none());
         assert!(cmd.filters.is_empty());
         assert!(cmd.modifications.is_empty());
@@ -252,6 +301,7 @@ mod tests {
             deadline: Some("tomorrow".to_string()),
             schedule: None,
             status: Some(StatusType::Ongoing),
+            query_type: Some(QueryType::Overdue),
             search: Some("keyword".to_string()),
             filters,
             modifications,
@@ -264,6 +314,7 @@ mod tests {
         assert_eq!(cmd.category, Some("urgent".to_string()));
         assert_eq!(cmd.deadline, Some("tomorrow".to_string()));
         assert_eq!(cmd.status, Some(StatusType::Ongoing));
+        assert_eq!(cmd.query_type, Some(QueryType::Overdue));
         assert_eq!(cmd.search, Some("keyword".to_string()));
         assert_eq!(cmd.filters.len(), 1);
         assert_eq!(cmd.modifications.len(), 1);

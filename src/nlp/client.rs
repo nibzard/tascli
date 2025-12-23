@@ -105,6 +105,11 @@ impl OpenAIClient {
                             "enum": ["ongoing", "done", "cancelled", "duplicate", "suspended", "pending", "open", "closed", "all"],
                             "description": "Status filter for listing commands"
                         },
+                        "query_type": {
+                            "type": "string",
+                            "enum": ["overdue", "upcoming", "unscheduled", "due_today", "due_tomorrow", "due_this_week", "due_this_month", "urgent", "all"],
+                            "description": "Complex query type for advanced filtering (e.g., 'overdue' for past-due tasks not done)"
+                        },
                         "search": {
                             "type": "string",
                             "description": "Search terms for filtering"
@@ -144,11 +149,23 @@ Rules:
    - Times: "HH:MM", "3PM", "3:00PM"
    - Recurring: "daily", "weekly Monday", "monthly 1st"
 4. For listing commands, extract filters like status, search terms, categories
-5. If the user's intent is unclear, make reasonable assumptions based on context
+5. For complex queries, identify the query_type:
+   - "overdue": tasks past their deadline that are not done
+   - "upcoming": tasks with deadlines soon (next 7 days)
+   - "unscheduled": tasks without any deadline
+   - "due_today": tasks due today
+   - "due_tomorrow": tasks due tomorrow
+   - "due_this_week": tasks due this week
+   - "due_this_month": tasks due this month
+   - "urgent": high-priority or overdue tasks
+6. If the user's intent is unclear, make reasonable assumptions based on context
 
 Examples:
 - "add a task for today to cleanup the trash" → action: "task", content: "cleanup the trash", deadline: "today"
 - "show my work tasks" → action: "list", content: "tasks", category: "work"
+- "show all overdue work tasks" → action: "list", content: "tasks", category: "work", query_type: "overdue"
+- "what's due today?" → action: "list", content: "tasks", query_type: "due_today"
+- "show me my upcoming tasks" → action: "list", content: "tasks", query_type: "upcoming"
 - "mark the cleanup task as done" → action: "done", content: "cleanup"
 - "create daily task to write journal" → action: "task", content: "write journal", schedule: "daily""#;
 
@@ -284,7 +301,16 @@ Rules:
    - Times: "HH:MM", "3PM", "3:00PM"
    - Recurring: "daily", "weekly Monday", "monthly 1st"
 4. For listing commands, extract filters like status, search terms, categories
-5. If the user's intent is unclear, make reasonable assumptions based on context"#.to_string();
+5. For complex queries, identify the query_type:
+   - "overdue": tasks past their deadline that are not done
+   - "upcoming": tasks with deadlines soon (next 7 days)
+   - "unscheduled": tasks without any deadline
+   - "due_today": tasks due today
+   - "due_tomorrow": tasks due tomorrow
+   - "due_this_week": tasks due this week
+   - "due_this_month": tasks due this month
+   - "urgent": high-priority or overdue tasks
+6. If the user's intent is unclear, make reasonable assumptions based on context"#.to_string();
 
         // Add context information to system prompt
         if !context_str.is_empty() && context_str != "No previous context" {
@@ -313,6 +339,9 @@ Rules:
 Examples:
 - "add a task for today to cleanup the trash" → action: "task", content: "cleanup the trash", deadline: "today"
 - "show my work tasks" → action: "list", content: "tasks", category: "work"
+- "show all overdue work tasks" → action: "list", content: "tasks", category: "work", query_type: "overdue"
+- "what's due today?" → action: "list", content: "tasks", query_type: "due_today"
+- "show me my upcoming tasks" → action: "list", content: "tasks", query_type: "upcoming"
 - "mark the cleanup task as done" → action: "done", content: "cleanup"
 - "create daily task to write journal" → action: "task", content: "write journal", schedule: "daily"
 
@@ -354,6 +383,11 @@ For follow-up commands, use context:
                             "type": "string",
                             "enum": ["ongoing", "done", "cancelled", "duplicate", "suspended", "pending", "open", "closed", "all"],
                             "description": "Status filter for listing commands"
+                        },
+                        "query_type": {
+                            "type": "string",
+                            "enum": ["overdue", "upcoming", "unscheduled", "due_today", "due_tomorrow", "due_this_week", "due_this_month", "urgent", "all"],
+                            "description": "Complex query type for advanced filtering (e.g., 'overdue' for past-due tasks not done)"
                         },
                         "search": {
                             "type": "string",

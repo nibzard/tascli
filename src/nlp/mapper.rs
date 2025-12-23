@@ -64,6 +64,70 @@ impl CommandMapper {
 
                 args.push(list_type.to_string());
 
+                // Handle complex query types
+                if let Some(query_type) = &command.query_type {
+                    match query_type {
+                        QueryType::Overdue => {
+                            // Overdue: status=ongoing, target_time_max=now
+                            args.push("-s".to_string());
+                            args.push("ongoing".to_string());
+                            args.push("--target-time-max".to_string());
+                            args.push("now".to_string());
+                        },
+                        QueryType::Upcoming => {
+                            // Upcoming: status=ongoing, target_time_min=now, target_time_max=+7days
+                            args.push("-s".to_string());
+                            args.push("ongoing".to_string());
+                            args.push("--target-time-min".to_string());
+                            args.push("now".to_string());
+                            args.push("--target-time-max".to_string());
+                            args.push("+7d".to_string());
+                        },
+                        QueryType::Unscheduled => {
+                            // Unscheduled: target_time is null
+                            args.push("--no-deadline".to_string());
+                        },
+                        QueryType::DueToday => {
+                            // Due today: target_time_min=today, target_time_max=today
+                            args.push("--target-time-min".to_string());
+                            args.push("today".to_string());
+                            args.push("--target-time-max".to_string());
+                            args.push("today".to_string());
+                        },
+                        QueryType::DueTomorrow => {
+                            // Due tomorrow: target_time_min=tomorrow, target_time_max=tomorrow
+                            args.push("--target-time-min".to_string());
+                            args.push("tomorrow".to_string());
+                            args.push("--target-time-max".to_string());
+                            args.push("tomorrow".to_string());
+                        },
+                        QueryType::DueThisWeek => {
+                            // Due this week: target_time_min=now, target_time_max=+7d
+                            args.push("--target-time-min".to_string());
+                            args.push("now".to_string());
+                            args.push("--target-time-max".to_string());
+                            args.push("+7d".to_string());
+                        },
+                        QueryType::DueThisMonth => {
+                            // Due this month: target_time_min=now, target_time-max=eom
+                            args.push("--target-time-min".to_string());
+                            args.push("now".to_string());
+                            args.push("--target-time-max".to_string());
+                            args.push("eom".to_string());
+                        },
+                        QueryType::Urgent => {
+                            // Urgent: overdue or due very soon (today/tomorrow)
+                            args.push("-s".to_string());
+                            args.push("ongoing".to_string());
+                            args.push("--target-time-max".to_string());
+                            args.push("tomorrow".to_string());
+                        },
+                        QueryType::All => {
+                            // No additional filters needed
+                        },
+                    }
+                }
+
                 // Add category filter
                 if let Some(category) = &command.category {
                     args.push("-c".to_string());
@@ -76,10 +140,12 @@ impl CommandMapper {
                     args.push(search.clone());
                 }
 
-                // Add status filter
+                // Add status filter (only if not already set by query_type)
                 if let Some(status) = &command.status {
-                    args.push("-s".to_string());
-                    args.push(format!("{:?}", status).to_lowercase());
+                    if command.query_type.is_none() || !matches!(command.query_type, Some(QueryType::Overdue | QueryType::Upcoming | QueryType::Urgent)) {
+                        args.push("-s".to_string());
+                        args.push(format!("{:?}", status).to_lowercase());
+                    }
                 }
 
                 // Add days filter
@@ -186,6 +252,21 @@ impl CommandMapper {
                 let mut desc = format!("List {}", item_type);
 
                 let mut filters = Vec::new();
+
+                if let Some(query_type) = &command.query_type {
+                    let query_desc = match query_type {
+                        QueryType::Overdue => "overdue",
+                        QueryType::Upcoming => "upcoming",
+                        QueryType::Unscheduled => "unscheduled",
+                        QueryType::DueToday => "due today",
+                        QueryType::DueTomorrow => "due tomorrow",
+                        QueryType::DueThisWeek => "due this week",
+                        QueryType::DueThisMonth => "due this month",
+                        QueryType::Urgent => "urgent",
+                        QueryType::All => "all",
+                    };
+                    filters.push(query_desc.to_string());
+                }
 
                 if let Some(category) = &command.category {
                     filters.push(format!("category: {}", category));
@@ -553,6 +634,126 @@ mod tests {
         assert_eq!(args, vec!["list", "task", "-s", "pending"]);
     }
 
+    // === Complex Query Mapping Tests ===
+
+    #[test]
+    fn test_list_mapping_overdue() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Overdue),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "-s", "ongoing", "--target-time-max", "now"]);
+    }
+
+    #[test]
+    fn test_list_mapping_overdue_with_category() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Overdue),
+            category: Some("work".to_string()),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "-s", "ongoing", "--target-time-max", "now", "-c", "work"]);
+    }
+
+    #[test]
+    fn test_list_mapping_upcoming() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Upcoming),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "-s", "ongoing", "--target-time-min", "now", "--target-time-max", "+7d"]);
+    }
+
+    #[test]
+    fn test_list_mapping_unscheduled() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Unscheduled),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "--no-deadline"]);
+    }
+
+    #[test]
+    fn test_list_mapping_due_today() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::DueToday),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "--target-time-min", "today", "--target-time-max", "today"]);
+    }
+
+    #[test]
+    fn test_list_mapping_due_tomorrow() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::DueTomorrow),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "--target-time-min", "tomorrow", "--target-time-max", "tomorrow"]);
+    }
+
+    #[test]
+    fn test_list_mapping_due_this_week() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::DueThisWeek),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "--target-time-min", "now", "--target-time-max", "+7d"]);
+    }
+
+    #[test]
+    fn test_list_mapping_due_this_month() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::DueThisMonth),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "--target-time-min", "now", "--target-time-max", "eom"]);
+    }
+
+    #[test]
+    fn test_list_mapping_urgent() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Urgent),
+            ..Default::default()
+        };
+
+        let args = CommandMapper::to_tascli_args(&command);
+        assert_eq!(args, vec!["list", "task", "-s", "ongoing", "--target-time-max", "tomorrow"]);
+    }
+
     // === Delete Mapping Tests ===
 
     #[test]
@@ -862,6 +1063,47 @@ mod tests {
 
         let desc = CommandMapper::describe_command(&command);
         assert!(desc.contains("last 7 days"));
+    }
+
+    #[test]
+    fn test_describe_list_with_query_type_overdue() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Overdue),
+            ..Default::default()
+        };
+
+        let desc = CommandMapper::describe_command(&command);
+        assert!(desc.contains("overdue"));
+    }
+
+    #[test]
+    fn test_describe_list_with_query_type_upcoming() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Upcoming),
+            ..Default::default()
+        };
+
+        let desc = CommandMapper::describe_command(&command);
+        assert!(desc.contains("upcoming"));
+    }
+
+    #[test]
+    fn test_describe_list_with_query_type_and_category() {
+        let command = NLPCommand {
+            action: ActionType::List,
+            content: "".to_string(),
+            query_type: Some(QueryType::Overdue),
+            category: Some("work".to_string()),
+            ..Default::default()
+        };
+
+        let desc = CommandMapper::describe_command(&command);
+        assert!(desc.contains("overdue"));
+        assert!(desc.contains("category: work"));
     }
 
     #[test]
