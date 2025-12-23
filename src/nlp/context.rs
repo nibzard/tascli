@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
 use chrono::Datelike;
 use chrono::Timelike;
+use std::fmt;
 
 /// Context information about previous commands and state
 #[derive(Debug, Clone)]
@@ -450,7 +451,14 @@ impl FuzzyMatcher {
         let mut matches = Vec::new();
 
         for candidate in candidates {
-            let score = Self::similarity_score(&input_lower, &candidate.to_lowercase());
+            let candidate_lower = candidate.to_lowercase();
+            let mut score = Self::similarity_score(&input_lower, &candidate_lower);
+
+            // Boost score for substring matches
+            if candidate_lower.contains(&input_lower) || input_lower.contains(&candidate_lower) {
+                score = score.max(0.8); // Substring matches get at least 0.8
+            }
+
             if score >= threshold {
                 matches.push((candidate.clone(), score));
             }
@@ -840,6 +848,268 @@ impl DeadlineInference {
         }
 
         phrases
+    }
+}
+
+/// Helper for detecting and resolving ambiguous inputs
+pub struct DisambiguationHelper;
+
+impl DisambiguationHelper {
+    /// Check if a category input is ambiguous and return disambiguation info if so
+    pub fn check_category_ambiguity(
+        input: &str,
+        known_categories: &[String],
+    ) -> Option<Disambiguation> {
+        if input.is_empty() || known_categories.is_empty() {
+            return None;
+        }
+
+        // Find all matches above a reasonable threshold
+        let matches = FuzzyMatcher::find_all_matches(input, known_categories, 0.5);
+
+        // If we have multiple matches with similar scores, it's ambiguous
+        if matches.len() > 1 {
+            // Check if the top two matches are close in score (within 20%)
+            let top_score = matches[0].1;
+            let second_score = matches[1].1;
+
+            if (top_score - second_score).abs() < 0.2 {
+                // Clone for prompt generation before moving
+                let matches_for_prompt = matches.clone();
+                return Some(Disambiguation {
+                    input: input.to_string(),
+                    ambiguity_type: AmbiguityType::Category,
+                    candidates: matches
+                        .into_iter()
+                        .take(5) // Limit to top 5
+                        .map(|(value, score)| DisambiguationCandidate {
+                            value,
+                            confidence: score,
+                            context: None,
+                        })
+                        .collect(),
+                    prompt: Self::format_category_prompt(input, &matches_for_prompt),
+                });
+            }
+        }
+
+        None
+    }
+
+    /// Check if a task input is ambiguous and return disambiguation info if so
+    pub fn check_task_ambiguity(
+        input: &str,
+        known_tasks: &[String],
+    ) -> Option<Disambiguation> {
+        if input.is_empty() || known_tasks.is_empty() {
+            return None;
+        }
+
+        // For tasks, we need a more sophisticated approach
+        let input_lower = input.to_lowercase();
+        let input_words: Vec<&str> = input_lower.split_whitespace().collect();
+
+        // Score each task based on word overlap and similarity
+        let mut scored_tasks: Vec<(String, f64)> = score_tasks(
+            &input_lower,
+            &input_words,
+            known_tasks,
+        );
+
+        // Sort by score descending
+        scored_tasks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Keep only tasks with a meaningful score
+        scored_tasks.retain(|(_, score)| *score >= 0.3);
+
+        // If we have multiple high-scoring matches close together, it's ambiguous
+        if scored_tasks.len() > 1 {
+            let top_score = scored_tasks[0].1;
+            let second_score = scored_tasks[1].1;
+
+            // If scores are close (within 15%) and both are reasonably high
+            if (top_score - second_score).abs() < 0.15 && top_score > 0.5 {
+                // Truncate to top 5 for usability
+                scored_tasks.truncate(5);
+
+                // Clone for prompt generation before moving
+                let scored_tasks_for_prompt = scored_tasks.clone();
+                return Some(Disambiguation {
+                    input: input.to_string(),
+                    ambiguity_type: AmbiguityType::Task,
+                    candidates: scored_tasks
+                        .into_iter()
+                        .map(|(value, score)| DisambiguationCandidate {
+                            value,
+                            confidence: score,
+                            context: None,
+                        })
+                        .collect(),
+                    prompt: Self::format_task_prompt(input, &scored_tasks_for_prompt),
+                });
+            }
+        }
+
+        None
+    }
+
+    /// Create a user-friendly prompt for category disambiguation
+    fn format_category_prompt(input: &str, matches: &[(String, f64)]) -> String {
+        let mut prompt = format!("Multiple categories match '{}'. Which one did you mean?", input);
+        prompt.push_str("\n\n");
+
+        for (i, (category, score)) in matches.iter().take(5).enumerate() {
+            let percentage = (score * 100.0).round() as i32;
+            prompt.push_str(&format!("{}. {} ({}% match)\n", i + 1, category, percentage));
+        }
+
+        prompt.push_str("\nPlease specify the full category name or provide more context.");
+        prompt
+    }
+
+    /// Create a user-friendly prompt for task disambiguation
+    fn format_task_prompt(input: &str, matches: &[(String, f64)]) -> String {
+        let mut prompt = format!("Multiple tasks match '{}'. Which one did you mean?", input);
+        prompt.push_str("\n\n");
+
+        for (i, (task, score)) in matches.iter().take(5).enumerate() {
+            let percentage = (score * 100.0).round() as i32;
+            // Truncate long tasks for readability
+            let display_task = if task.len() > 50 {
+                format!("{}...", &task[..47])
+            } else {
+                task.clone()
+            };
+            prompt.push_str(&format!("{}. {} ({}% match)\n", i + 1, display_task, percentage));
+        }
+
+        prompt.push_str("\nPlease use more specific words from the task you want.");
+        prompt
+    }
+
+    /// Resolve a disambiguation by selecting a candidate index
+    pub fn resolve_by_index(disambiguation: &Disambiguation, index: usize) -> Option<String> {
+        if index < disambiguation.candidates.len() {
+            Some(disambiguation.candidates[index].value.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Check if deadline is ambiguous
+    pub fn check_deadline_ambiguity(input: &str) -> Option<Disambiguation> {
+        if DeadlineInference::is_ambiguous_deadline(input) {
+            return Some(Disambiguation {
+                input: input.to_string(),
+                ambiguity_type: AmbiguityType::Deadline,
+                candidates: vec![
+                    DisambiguationCandidate {
+                        value: "today".to_string(),
+                        confidence: 0.8,
+                        context: Some("Due by end of day".to_string()),
+                    },
+                    DisambiguationCandidate {
+                        value: "tomorrow".to_string(),
+                        confidence: 0.7,
+                        context: Some("Due tomorrow".to_string()),
+                    },
+                    DisambiguationCandidate {
+                        value: "week".to_string(),
+                        confidence: 0.6,
+                        context: Some("Due this week".to_string()),
+                    },
+                ],
+                prompt: DeadlineInference::suggest_deadline_clarification(input)
+                    .unwrap_or_else(|| "When would you like to complete this?".to_string()),
+            });
+        }
+
+        None
+    }
+
+    /// Get a user-friendly display of disambiguation options
+    pub fn format_disambiguation(disambiguation: &Disambiguation) -> String {
+        let mut result = String::new();
+
+        match disambiguation.ambiguity_type {
+            AmbiguityType::Category => {
+                result.push_str("Category Ambiguity\n");
+                result.push_str("==================\n");
+            }
+            AmbiguityType::Task => {
+                result.push_str("Task Ambiguity\n");
+                result.push_str("==============\n");
+            }
+            AmbiguityType::Deadline => {
+                result.push_str("Deadline Ambiguity\n");
+                result.push_str("==================\n");
+            }
+        }
+
+        result.push_str(&disambiguation.prompt);
+
+        // Add candidates list
+        if !disambiguation.candidates.is_empty() {
+            result.push_str("\n\nOptions:\n");
+            for (i, candidate) in disambiguation.candidates.iter().enumerate() {
+                let percentage = (candidate.confidence * 100.0).round() as i32;
+                result.push_str(&format!("{}. {} ({}% match)\n", i + 1, candidate.value, percentage));
+            }
+        }
+
+        result.push_str("\n");
+
+        result
+    }
+}
+
+/// Helper function to score tasks based on input
+fn score_tasks(
+    input_lower: &str,
+    input_words: &[&str],
+    known_tasks: &[String],
+) -> Vec<(String, f64)> {
+    let mut scored = Vec::new();
+
+    for task in known_tasks {
+        let task_lower = task.to_lowercase();
+        let task_words: Vec<&str> = task_lower.split_whitespace().collect();
+
+        // Calculate similarity score based on multiple factors
+        let mut score = 0.0;
+
+        // 1. Word overlap (40% weight)
+        let matching_words = input_words.iter()
+            .filter(|w| task_words.contains(w))
+            .count() as f64;
+        let word_score = if input_words.is_empty() {
+            0.0
+        } else {
+            matching_words / input_words.len() as f64
+        };
+        score += word_score * 0.4;
+
+        // 2. Fuzzy similarity (40% weight)
+        let fuzzy_score = FuzzyMatcher::similarity_score(input_lower, &task_lower);
+        score += fuzzy_score * 0.4;
+
+        // 3. Contains match (20% weight)
+        let contains_bonus = if task_lower.contains(input_lower) || input_lower.contains(&task_lower) {
+            0.2
+        } else {
+            0.0
+        };
+        score += contains_bonus;
+
+        scored.push((task.clone(), score));
+    }
+
+    scored
+}
+
+impl fmt::Display for Disambiguation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", DisambiguationHelper::format_disambiguation(self))
     }
 }
 
@@ -1896,5 +2166,365 @@ mod tests {
         // Test 86400 seconds exactly (1 day)
         let result = DeadlineInference::format_relative_deadline(86400, &context);
         assert_eq!(result, "+1d");
+    }
+
+    // === DisambiguationHelper Tests ===
+
+    #[test]
+    fn test_check_category_ambiguity_no_ambiguity_single_match() {
+        let categories = vec!["work".to_string(), "personal".to_string()];
+        let result = DisambiguationHelper::check_category_ambiguity("work", &categories);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_category_ambiguity_no_ambiguity_empty_input() {
+        let categories = vec!["work".to_string(), "personal".to_string()];
+        let result = DisambiguationHelper::check_category_ambiguity("", &categories);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_category_ambiguity_no_ambiguity_empty_categories() {
+        let categories: Vec<String> = vec![];
+        let result = DisambiguationHelper::check_category_ambiguity("work", &categories);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_category_ambiguity_similar_categories() {
+        let categories = vec![
+            "work-project".to_string(),
+            "work-meeting".to_string(),
+            "personal-project".to_string(),
+        ];
+        // "work" should match both work-project and work-meeting
+        let result = DisambiguationHelper::check_category_ambiguity("work", &categories);
+        // Should be ambiguous since both start with "work"
+        assert!(result.is_some());
+        let disambiguation = result.unwrap();
+        assert_eq!(disambiguation.ambiguity_type, AmbiguityType::Category);
+        assert!(disambiguation.candidates.len() >= 2);
+    }
+
+    #[test]
+    fn test_check_category_ambiguity_fuzzy_input() {
+        let categories = vec![
+            "engineering".to_string(),
+            "engagement".to_string(),
+            "entertainment".to_string(),
+        ];
+        // "eng" could match engineering or engagement
+        let result = DisambiguationHelper::check_category_ambiguity("eng", &categories);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_check_task_ambiguity_empty_input() {
+        let tasks = vec!["buy groceries".to_string(), "call mom".to_string()];
+        let result = DisambiguationHelper::check_task_ambiguity("", &tasks);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_task_ambiguity_empty_tasks() {
+        let tasks: Vec<String> = vec![];
+        let result = DisambiguationHelper::check_task_ambiguity("groceries", &tasks);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_task_ambiguity_similar_tasks() {
+        let tasks = vec![
+            "buy groceries from store".to_string(),
+            "buy groceries from market".to_string(),
+            "buy online groceries".to_string(),
+        ];
+        // "groceries" should match multiple tasks
+        let result = DisambiguationHelper::check_task_ambiguity("groceries", &tasks);
+        assert!(result.is_some());
+        let disambiguation = result.unwrap();
+        assert_eq!(disambiguation.ambiguity_type, AmbiguityType::Task);
+        assert!(disambiguation.candidates.len() >= 2);
+    }
+
+    #[test]
+    fn test_check_task_ambiguity_word_overlap() {
+        let tasks = vec![
+            "schedule team meeting for monday".to_string(),
+            "schedule team meeting for tuesday".to_string(),
+            "schedule individual meeting".to_string(),
+        ];
+        // "team meeting" could match both monday and tuesday versions
+        let result = DisambiguationHelper::check_task_ambiguity("team meeting", &tasks);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_check_task_ambiguity_unique_match() {
+        let tasks = vec![
+            "buy groceries".to_string(),
+            "call mom".to_string(),
+            "exercise for 30 minutes".to_string(),
+        ];
+        // "exercise" should uniquely match the exercise task
+        let result = DisambiguationHelper::check_task_ambiguity("exercise", &tasks);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_deadline_ambiguity_later() {
+        let result = DisambiguationHelper::check_deadline_ambiguity("do this later");
+        assert!(result.is_some());
+        let disambiguation = result.unwrap();
+        assert_eq!(disambiguation.ambiguity_type, AmbiguityType::Deadline);
+        assert!(!disambiguation.candidates.is_empty());
+    }
+
+    #[test]
+    fn test_check_deadline_ambiguity_sometime() {
+        let result = DisambiguationHelper::check_deadline_ambiguity("finish sometime");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_check_deadline_ambiguity_specific() {
+        let result = DisambiguationHelper::check_deadline_ambiguity("finish by tomorrow");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_by_index_valid() {
+        let disambiguation = Disambiguation {
+            input: "test".to_string(),
+            ambiguity_type: AmbiguityType::Category,
+            candidates: vec![
+                DisambiguationCandidate {
+                    value: "option1".to_string(),
+                    confidence: 0.9,
+                    context: None,
+                },
+                DisambiguationCandidate {
+                    value: "option2".to_string(),
+                    confidence: 0.8,
+                    context: None,
+                },
+            ],
+            prompt: "Choose one".to_string(),
+        };
+
+        let result = DisambiguationHelper::resolve_by_index(&disambiguation, 0);
+        assert_eq!(result, Some("option1".to_string()));
+
+        let result = DisambiguationHelper::resolve_by_index(&disambiguation, 1);
+        assert_eq!(result, Some("option2".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_by_index_invalid() {
+        let disambiguation = Disambiguation {
+            input: "test".to_string(),
+            ambiguity_type: AmbiguityType::Category,
+            candidates: vec![
+                DisambiguationCandidate {
+                    value: "option1".to_string(),
+                    confidence: 0.9,
+                    context: None,
+                },
+            ],
+            prompt: "Choose one".to_string(),
+        };
+
+        let result = DisambiguationHelper::resolve_by_index(&disambiguation, 5);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_format_disambiguation_category() {
+        let disambiguation = Disambiguation {
+            input: "work".to_string(),
+            ambiguity_type: AmbiguityType::Category,
+            candidates: vec![
+                DisambiguationCandidate {
+                    value: "work-project".to_string(),
+                    confidence: 0.85,
+                    context: None,
+                },
+                DisambiguationCandidate {
+                    value: "work-meeting".to_string(),
+                    confidence: 0.75,
+                    context: None,
+                },
+            ],
+            prompt: "Multiple categories match 'work'".to_string(),
+        };
+
+        let formatted = DisambiguationHelper::format_disambiguation(&disambiguation);
+        assert!(formatted.contains("Category Ambiguity"));
+        assert!(formatted.contains("work-project"));
+        assert!(formatted.contains("work-meeting"));
+    }
+
+    #[test]
+    fn test_format_disambiguation_task() {
+        let disambiguation = Disambiguation {
+            input: "meeting".to_string(),
+            ambiguity_type: AmbiguityType::Task,
+            candidates: vec![
+                DisambiguationCandidate {
+                    value: "schedule team meeting".to_string(),
+                    confidence: 0.8,
+                    context: None,
+                },
+            ],
+            prompt: "Multiple tasks match 'meeting'".to_string(),
+        };
+
+        let formatted = DisambiguationHelper::format_disambiguation(&disambiguation);
+        assert!(formatted.contains("Task Ambiguity"));
+    }
+
+    #[test]
+    fn test_format_disambiguation_deadline() {
+        let disambiguation = Disambiguation {
+            input: "later".to_string(),
+            ambiguity_type: AmbiguityType::Deadline,
+            candidates: vec![
+                DisambiguationCandidate {
+                    value: "today".to_string(),
+                    confidence: 0.8,
+                    context: Some("Due by end of day".to_string()),
+                },
+            ],
+            prompt: "When would you like to complete this?".to_string(),
+        };
+
+        let formatted = DisambiguationHelper::format_disambiguation(&disambiguation);
+        assert!(formatted.contains("Deadline Ambiguity"));
+    }
+
+    #[test]
+    fn test_disambiguation_candidate_context() {
+        let candidate = DisambiguationCandidate {
+            value: "today".to_string(),
+            confidence: 0.9,
+            context: Some("Due by end of day".to_string()),
+        };
+
+        assert_eq!(candidate.value, "today");
+        assert_eq!(candidate.confidence, 0.9);
+        assert_eq!(candidate.context, Some("Due by end of day".to_string()));
+    }
+
+    #[test]
+    fn test_disambiguation_candidate_no_context() {
+        let candidate = DisambiguationCandidate {
+            value: "work".to_string(),
+            confidence: 0.85,
+            context: None,
+        };
+
+        assert!(candidate.context.is_none());
+    }
+
+    #[test]
+    fn test_ambiguity_type_equality() {
+        assert_eq!(AmbiguityType::Category, AmbiguityType::Category);
+        assert_ne!(AmbiguityType::Category, AmbiguityType::Task);
+        assert_ne!(AmbiguityType::Task, AmbiguityType::Deadline);
+    }
+
+    #[test]
+    fn test_disambiguation_display_impl() {
+        let disambiguation = Disambiguation {
+            input: "wrk".to_string(),
+            ambiguity_type: AmbiguityType::Category,
+            candidates: vec![
+                DisambiguationCandidate {
+                    value: "work".to_string(),
+                    confidence: 0.9,
+                    context: None,
+                },
+            ],
+            prompt: "Multiple categories match".to_string(),
+        };
+
+        let display = format!("{}", disambiguation);
+        assert!(display.contains("Category Ambiguity"));
+    }
+
+    // === Edge Cases for Disambiguation ===
+
+    #[test]
+    fn test_check_category_ambiguity_case_insensitive() {
+        let categories = vec![
+            "WorkProject".to_string(),
+            "WorkMeeting".to_string(),
+        ];
+        // Lowercase input should still match
+        let result = DisambiguationHelper::check_category_ambiguity("work", &categories);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_check_task_ambiguity_case_insensitive() {
+        let tasks = vec![
+            "Buy Groceries From Store".to_string(),
+            "Buy Groceries From Market".to_string(),
+        ];
+        let result = DisambiguationHelper::check_task_ambiguity("groceries", &tasks);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_check_task_ambiguity_single_task() {
+        let tasks = vec!["buy groceries".to_string()];
+        let result = DisambiguationHelper::check_task_ambiguity("groceries", &tasks);
+        // Single task should not be ambiguous even if it matches
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_category_ambiguity_single_category() {
+        let categories = vec!["work".to_string()];
+        let result = DisambiguationHelper::check_category_ambiguity("work", &categories);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_score_tasks_empty_tasks() {
+        let input_lower = "test";
+        let input_words: Vec<&str> = vec!["test"];
+        let tasks: Vec<String> = vec![];
+
+        let result = score_tasks(input_lower, &input_words, &tasks);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_score_tasks_word_overlap() {
+        let tasks = vec![
+            "schedule team meeting for monday".to_string(),
+            "buy groceries from store".to_string(),
+        ];
+
+        let result = score_tasks("team meeting", &["team", "meeting"], &tasks);
+        assert_eq!(result.len(), 2);
+        // First task should have higher score due to word overlap
+        assert!(result[0].1 > result[1].1);
+    }
+
+    #[test]
+    fn test_score_tasks_fuzzy_similarity() {
+        let tasks = vec![
+            "buy groceries at store".to_string(),
+            "purchase grocery items".to_string(),
+        ];
+
+        let result = score_tasks("groceries", &["groceries"], &tasks);
+        assert_eq!(result.len(), 2);
+        // Both tasks should have reasonable scores
+        assert!(result[0].1 > 0.0);
+        assert!(result[1].1 > 0.0);
     }
 }

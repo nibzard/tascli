@@ -276,6 +276,42 @@ pub enum NLPError {
     ConfigError(String),
 }
 
+/// Disambiguation information for ambiguous inputs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Disambiguation {
+    /// The ambiguous input
+    pub input: String,
+    /// The type of ambiguity
+    pub ambiguity_type: AmbiguityType,
+    /// Possible matches with their scores
+    pub candidates: Vec<DisambiguationCandidate>,
+    /// A helpful message asking for clarification
+    pub prompt: String,
+}
+
+/// Types of ambiguity that can occur
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbiguityType {
+    /// Multiple categories match the input
+    Category,
+    /// Multiple tasks match the input
+    Task,
+    /// Time/deadline is ambiguous
+    Deadline,
+}
+
+/// A candidate for disambiguation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisambiguationCandidate {
+    /// The candidate value
+    pub value: String,
+    /// Confidence score (0.0 to 1.0)
+    pub confidence: f64,
+    /// Additional context about this candidate
+    pub context: Option<String>,
+}
+
 /// Result type for NLP operations
 pub type NLPResult<T> = Result<T, NLPError>;
 

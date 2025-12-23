@@ -73,7 +73,13 @@
   - Added regex patterns for "next <weekday>" and "for <weekday>"
   - Updated system prompts with relative time examples
   - Added 18 new tests (8 context.rs + 10 natural_language_patterns_tests.rs)
-- [ ] Add support for compound commands
+- [x] Add support for compound commands ✅
+  - Implemented command chaining for multiple operations in single NLP input
+  - Added CompoundCommand type to NLPCommand with commands vector
+  - Updated OpenAI function schema to support compound operations
+  - Enhanced system prompts with compound command examples
+  - CommandMapper now handles sequential command execution
+  - Allows users to chain operations like "add task X and list all tasks"
 - [ ] Create disambiguation for ambiguous inputs
 
 ### Performance & Caching
@@ -125,7 +131,7 @@
 ## Implementation Status
 
 ### Current Task: Phase 2 - Advanced Parsing
-**Next Action**: Add support for compound commands
+**Next Action**: Create disambiguation for ambiguous inputs
 
 ### Completed Tasks ✅
 - Project analysis and architecture design
@@ -166,6 +172,13 @@
   - Updated system prompts with relative time examples
   - 18 new tests (8 context.rs + 10 natural_language_patterns_tests.rs)
   - All 621 tests passing (Commit a2e708d)
+- ✅ Phase 2 Compound Command Support (Commit 52dbaac)
+  - Implemented command chaining for multiple operations in single NLP input
+  - Added CompoundCommand type to NLPCommand with commands vector
+  - Updated OpenAI function schema to support compound operations
+  - Enhanced system prompts with compound command examples
+  - CommandMapper now handles sequential command execution
+  - Allows users to chain operations like "add task X and list all tasks"
 
 ### Key Decisions Made
 - Use OpenAI Responses API with gpt-5-nano
