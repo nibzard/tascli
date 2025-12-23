@@ -12,6 +12,7 @@ pub mod types;
 pub mod context;
 pub mod pattern_matcher;
 pub mod sequential;
+pub mod batching;
 
 #[cfg(test)]
 mod mapper_tests;
@@ -39,3 +40,13 @@ pub use types::{
     ExecutionSummary,
 };
 pub use sequential::SequentialExecutor;
+
+// Batching support
+pub use batching::{
+    BatchAnalyzer,
+    BatchExecutor,
+    CommandBatch,
+    BatchType,
+    BatchResult,
+    BatchExecutionSummary,
+};
