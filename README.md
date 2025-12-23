@@ -45,6 +45,8 @@ tascli finish the first task
 
 Traditional commands continue to work exactly as before. The system automatically detects traditional command syntax and routes appropriately.
 
+See [NLP_EXAMPLES.md](NLP_EXAMPLES.md) for comprehensive natural language examples and [MIGRATION.md](MIGRATION.md) for guidance on upgrading from traditional commands.
+
 ### Tasks
 
 Create tasks with deadlines:
