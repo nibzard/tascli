@@ -3,6 +3,7 @@
 use super::types::*;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use regex::Regex;
 
 /// Context information about previous commands and state
 #[derive(Debug, Clone)]
@@ -458,6 +459,360 @@ impl FuzzyMatcher {
     }
 }
 
+/// Result of deadline inference
+#[derive(Debug, Clone, PartialEq)]
+pub struct InferredDeadline {
+    /// The inferred deadline as a human-readable string
+    pub deadline: String,
+    /// Confidence level (0.0 to 1.0)
+    pub confidence: f64,
+    /// Whether the deadline was explicitly stated or inferred
+    pub is_explicit: bool,
+    /// The source of the inference
+    pub source: DeadlineSource,
+}
+
+/// Where the deadline information came from
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeadlineSource {
+    /// Explicitly mentioned (e.g., "by 5PM", "due tomorrow")
+    Explicit,
+    /// Inferred from relative time (e.g., "in 2 hours")
+    RelativeTime,
+    /// Inferred from urgency words (e.g., "urgent", "ASAP")
+    Urgency,
+    /// Inferred from task category patterns
+    CategoryPattern,
+    /// Default deadline applied
+    Default,
+}
+
+/// Intelligent deadline inference from natural language
+pub struct DeadlineInference;
+
+impl DeadlineInference {
+    /// Infer deadline from natural language input
+    pub fn infer_deadline(input: &str, time_context: &TimeContext, category: Option<&str>) -> Option<InferredDeadline> {
+        let input_lower = input.to_lowercase();
+
+        // 1. Try explicit time patterns first
+        if let Some(result) = Self::infer_explicit_deadline(&input_lower, time_context) {
+            return Some(result);
+        }
+
+        // 2. Try relative time patterns
+        if let Some(result) = Self::infer_relative_deadline(&input_lower, time_context) {
+            return Some(result);
+        }
+
+        // 3. Try urgency-based inference
+        if let Some(result) = Self::infer_urgency_deadline(&input_lower, time_context) {
+            return Some(result);
+        }
+
+        // 4. Try category-based defaults
+        if let Some(cat) = category {
+            if let Some(result) = Self::infer_category_deadline(cat, time_context) {
+                return Some(result);
+            }
+        }
+
+        None
+    }
+
+    /// Infer explicit deadlines (mentioned dates/times)
+    fn infer_explicit_deadline(input: &str, _time_context: &TimeContext) -> Option<InferredDeadline> {
+        // Common deadline indicator words (case-insensitive)
+        let deadline_patterns = [
+            r"(?i)by\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|eod|eow|eom|eoy)",
+            r"(?i)due\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
+            r"(?i)deadline\s+(?:is\s+)?(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
+            r"(?i)before\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|eod)",
+            r"(?i)on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
+        ];
+
+        for pattern in &deadline_patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if let Some(caps) = re.captures(input) {
+                    if let Some(match_str) = caps.get(1) {
+                        return Some(InferredDeadline {
+                            deadline: Self::normalize_deadline_keyword(match_str.as_str()),
+                            confidence: 0.95,
+                            is_explicit: true,
+                            source: DeadlineSource::Explicit,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for time-specific deadlines (e.g., "by 5PM", "due at 3:30")
+        let time_patterns = [
+            r"(?i)by\s+(\d{1,2}(?::\d{2})?(?:\s*(?:am|pm|a\.m\.|p\.m\.))?)",
+            r"(?i)due\s+(?:at\s+)?(\d{1,2}(?::\d{2})?(?:\s*(?:am|pm|a\.m\.|p\.m\.))?)",
+            r"(?i)deadline\s+(?:at\s+)?(\d{1,2}(?::\d{2})?(?:\s*(?:am|pm|a\.m\.|p\.m\.))?)",
+        ];
+
+        for pattern in &time_patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if let Some(caps) = re.captures(input) {
+                    if let Some(match_str) = caps.get(1) {
+                        return Some(InferredDeadline {
+                            deadline: format!("today {}", match_str.as_str()),
+                            confidence: 0.90,
+                            is_explicit: true,
+                            source: DeadlineSource::Explicit,
+                        });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Infer relative time deadlines (e.g., "in 2 hours", "next week")
+    fn infer_relative_deadline(input: &str, time_context: &TimeContext) -> Option<InferredDeadline> {
+        // "in X time_unit" patterns
+        let relative_patterns = [
+            (r"in\s+(\d+)\s+seconds?", 1, "second"),
+            (r"in\s+(\d+)\s+minutes?", 60, "minute"),
+            (r"in\s+(\d+)\s+hours?", 3600, "hour"),
+            (r"in\s+(\d+)\s+days?", 86400, "day"),
+            (r"in\s+(\d+)\s+weeks?", 604800, "week"),
+        ];
+
+        for (pattern, seconds_per_unit, unit_name) in &relative_patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if let Some(caps) = re.captures(input) {
+                    if let Some(match_str) = caps.get(1) {
+                        if let Ok(amount) = match_str.as_str().parse::<i64>() {
+                            let total_seconds = amount * seconds_per_unit;
+                            return Some(InferredDeadline {
+                                deadline: Self::format_relative_deadline(total_seconds, time_context),
+                                confidence: 0.85,
+                                is_explicit: true,
+                                source: DeadlineSource::RelativeTime,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // "next week"/"next month" patterns
+        let next_patterns = [
+            (r"next\s+week", "7 days"),
+            (r"next\s+month", "30 days"),
+            (r"next\s+year", "365 days"),
+        ];
+
+        for (pattern, description) in &next_patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if re.is_match(input) {
+                    return Some(InferredDeadline {
+                        deadline: description.to_string(),
+                        confidence: 0.80,
+                        is_explicit: true,
+                        source: DeadlineSource::RelativeTime,
+                    });
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Infer deadline from urgency indicators
+    fn infer_urgency_deadline(input: &str, _time_context: &TimeContext) -> Option<InferredDeadline> {
+        let urgency_mappings: [(&str, &str, f64); 6] = [
+            (r"(?i)\burgent(?:ly)?\b", "today", 0.70),
+            (r"(?i)\basap\b|\bas soon as possible\b", "today", 0.65),
+            (r"(?i)\bimmediately\b|\bright now\b", "today", 0.75),
+            (r"(?i)\bsoon\b", "tomorrow", 0.50),
+            (r"(?i)\bthis week\b", "eow", 0.60),
+            (r"(?i)\boverdue\b", "yesterday", 0.80),
+        ];
+
+        for (pattern, deadline, confidence) in &urgency_mappings {
+            if let Ok(re) = Regex::new(pattern) {
+                if re.is_match(input) {
+                    return Some(InferredDeadline {
+                        deadline: deadline.to_string(),
+                        confidence: *confidence,
+                        is_explicit: false,
+                        source: DeadlineSource::Urgency,
+                    });
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Infer deadline based on category patterns
+    fn infer_category_deadline(category: &str, time_context: &TimeContext) -> Option<InferredDeadline> {
+        let category_lower = category.to_lowercase();
+
+        // Common category-deadline associations
+        let category_rules: [(&str, &str, f64); 12] = [
+            // Urgent categories
+            ("urgent", "today", 0.60),
+            ("today", "today", 0.70),
+            ("emergency", "today", 0.65),
+            ("asap", "today", 0.60),
+
+            // Work-related (often end of week)
+            ("work", "eow", 0.40),
+            ("meeting", "tomorrow", 0.50),
+
+            // Personal (often more flexible)
+            ("personal", "week", 0.30),
+            ("errand", "weekend", 0.40),
+
+            // Shopping/chores (often this week)
+            ("shopping", "week", 0.35),
+            ("chore", "weekend", 0.35),
+
+            // Learning/reading (often longer term)
+            ("learning", "month", 0.30),
+            ("reading", "month", 0.30),
+        ];
+
+        for (pattern, deadline, confidence) in &category_rules {
+            if category_lower.contains(pattern) {
+                return Some(InferredDeadline {
+                    deadline: deadline.to_string(),
+                    confidence: *confidence,
+                    is_explicit: false,
+                    source: DeadlineSource::CategoryPattern,
+                });
+            }
+        }
+
+        None
+    }
+
+    /// Normalize deadline keywords to standard format
+    fn normalize_deadline_keyword(keyword: &str) -> String {
+        match keyword.to_lowercase().as_str() {
+            "eod" => "today".to_string(),
+            "eow" | "week" => "sunday".to_string(),
+            "eom" => "month".to_string(),
+            "eoy" => "year".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    /// Format relative deadline as human-readable string
+    fn format_relative_deadline(seconds: i64, time_context: &TimeContext) -> String {
+        let minutes = seconds / 60;
+        let hours = seconds / 3600;
+        let days = seconds / 86400;
+
+        if days > 0 {
+            format!("{} days", days)
+        } else if hours > 0 {
+            format!("{} hours", hours)
+        } else if minutes > 0 {
+            format!("{} minutes", minutes)
+        } else {
+            format!("{} seconds", seconds)
+        }
+    }
+
+    /// Get default deadline for a task type
+    pub fn default_deadline(task_type: ActionType) -> Option<String> {
+        match task_type {
+            ActionType::Task => Some("tomorrow".to_string()),
+            ActionType::Record => None, // Records don't typically have deadlines
+            _ => None,
+        }
+    }
+
+    /// Calculate business days from now (skips weekends)
+    pub fn add_business_days(days: u32, time_context: &TimeContext) -> String {
+        let mut current_day = time_context.day_of_week();
+        let mut days_to_add = days as i64;
+        let mut total_days = 0;
+
+        while days_to_add > 0 {
+            total_days += 1;
+            current_day = (current_day + 1) % 7;
+            // Skip weekends (0 = Sunday, 6 = Saturday)
+            if current_day != 0 && current_day != 6 {
+                days_to_add -= 1;
+            }
+        }
+
+        if total_days == 1 {
+            "tomorrow".to_string()
+        } else {
+            format!("{} days", total_days)
+        }
+    }
+
+    /// Check if a deadline expression is ambiguous
+    pub fn is_ambiguous_deadline(input: &str) -> bool {
+        let ambiguous_patterns = [
+            r"\blater\b",
+            r"\bsometime\b",
+            r"\beventually\b",
+            r"\bsomeday\b",
+        ];
+
+        for pattern in &ambiguous_patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if re.is_match(input) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Suggest clarification for ambiguous deadlines
+    pub fn suggest_deadline_clarification(input: &str) -> Option<String> {
+        if Self::is_ambiguous_deadline(input) {
+            Some(
+                "When would you like to complete this? You can say things like \
+                'today', 'tomorrow', 'in 2 hours', 'by Friday', etc."
+                .to_string()
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Extract all time-related phrases from input for debugging
+    pub fn extract_time_phrases(input: &str) -> Vec<String> {
+        let mut phrases = Vec::new();
+
+        let time_patterns = [
+            r"(?i)\bin\s+\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b",
+            r"(?i)\bby\s+(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|eod|eow)\b",
+            r"(?i)\bdue\s+(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+            r"(?i)\bnext\s+(?:week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+            r"(?i)\bthis\s+(?:week|weekend|month)\b",
+            r"(?i)\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b",
+            r"(?i)\b\d{1,2}:\d{2}\s*(?:am|pm)?\b",
+        ];
+
+        for pattern in &time_patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                for caps in re.captures_iter(input) {
+                    if let Some(match_str) = caps.get(0) {
+                        phrases.push(match_str.as_str().to_string());
+                    }
+                }
+            }
+        }
+
+        phrases
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,5 +1207,527 @@ mod tests {
         let context = TimeContext::with_time(-100);
         let now = context.now();
         assert_eq!(now, -100);
+    }
+
+    // === DeadlineInference Tests ===
+
+    #[test]
+    fn test_infer_explicit_deadline_by_today() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("finish this by today", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "today");
+        assert!(inferred.is_explicit);
+        assert_eq!(inferred.source, DeadlineSource::Explicit);
+        assert!(inferred.confidence > 0.9);
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_by_tomorrow() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("task due tomorrow", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "tomorrow");
+        assert_eq!(inferred.source, DeadlineSource::Explicit);
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_by_friday() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("complete by Friday", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "friday");
+        assert_eq!(inferred.source, DeadlineSource::Explicit);
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_by_eod() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("finish by eod", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "today"); // eod normalizes to today
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_by_eow() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("due by eow", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "sunday"); // eow normalizes to sunday
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_before_monday() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("finish before Monday", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "monday");
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_on_tuesday() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("meeting on Tuesday", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "tuesday");
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_by_time() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("submit by 5PM", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert!(inferred.deadline.contains("today"));
+        assert!(inferred.deadline.contains("5PM"));
+    }
+
+    #[test]
+    fn test_infer_explicit_deadline_due_at_time() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_explicit_deadline("due at 3:30", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert!(inferred.deadline.contains("today"));
+        assert!(inferred.deadline.contains("3:30"));
+    }
+
+    #[test]
+    fn test_infer_relative_deadline_in_2_hours() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_relative_deadline("complete in 2 hours", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "2 hours");
+        assert_eq!(inferred.source, DeadlineSource::RelativeTime);
+    }
+
+    #[test]
+    fn test_infer_relative_deadline_in_30_minutes() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_relative_deadline("finish in 30 minutes", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "30 minutes");
+    }
+
+    #[test]
+    fn test_infer_relative_deadline_in_5_days() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_relative_deadline("do it in 5 days", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "5 days");
+    }
+
+    #[test]
+    fn test_infer_relative_deadline_in_1_week() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_relative_deadline("review in 1 week", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "7 days");
+    }
+
+    #[test]
+    fn test_infer_relative_deadline_next_week() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_relative_deadline("finish next week", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "7 days");
+        assert_eq!(inferred.source, DeadlineSource::RelativeTime);
+    }
+
+    #[test]
+    fn test_infer_relative_deadline_next_month() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_relative_deadline("start next month", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "30 days");
+    }
+
+    #[test]
+    fn test_infer_relative_deadline_next_year() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_relative_deadline("plan next year", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "365 days");
+    }
+
+    #[test]
+    fn test_infer_urgency_deadline_urgent() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_urgency_deadline("urgent task", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "today");
+        assert!(!inferred.is_explicit);
+        assert_eq!(inferred.source, DeadlineSource::Urgency);
+    }
+
+    #[test]
+    fn test_infer_urgency_deadline_asap() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_urgency_deadline("do this ASAP", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "today");
+        assert_eq!(inferred.source, DeadlineSource::Urgency);
+    }
+
+    #[test]
+    fn test_infer_urgency_deadline_immediately() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_urgency_deadline("handle immediately", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "today");
+        assert!(inferred.confidence > 0.7);
+    }
+
+    #[test]
+    fn test_infer_urgency_deadline_soon() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_urgency_deadline("finish soon", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "tomorrow");
+        assert_eq!(inferred.source, DeadlineSource::Urgency);
+    }
+
+    #[test]
+    fn test_infer_urgency_deadline_this_week() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_urgency_deadline("complete this week", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "eow");
+    }
+
+    #[test]
+    fn test_infer_urgency_deadline_overdue() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_urgency_deadline("task is overdue", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "yesterday");
+        assert!(inferred.confidence > 0.75);
+    }
+
+    #[test]
+    fn test_infer_category_deadline_urgent() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("urgent", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "today");
+        assert_eq!(inferred.source, DeadlineSource::CategoryPattern);
+    }
+
+    #[test]
+    fn test_infer_category_deadline_emergency() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("emergency", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "today");
+    }
+
+    #[test]
+    fn test_infer_category_deadline_work() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("work", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "eow");
+        assert!(inferred.confidence < 0.5); // Lower confidence for category patterns
+    }
+
+    #[test]
+    fn test_infer_category_deadline_meeting() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("meeting", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "tomorrow");
+    }
+
+    #[test]
+    fn test_infer_category_deadline_personal() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("personal", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "week");
+    }
+
+    #[test]
+    fn test_infer_category_deadline_shopping() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("shopping", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "week");
+    }
+
+    #[test]
+    fn test_infer_category_deadline_learning() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("learning", &context);
+        assert!(result.is_some());
+        let inferred = result.unwrap();
+        assert_eq!(inferred.deadline, "month");
+    }
+
+    #[test]
+    fn test_infer_category_deadline_unknown() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_category_deadline("unknown-category", &context);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_normalize_deadline_keyword_eod() {
+        assert_eq!(DeadlineInference::normalize_deadline_keyword("eod"), "today");
+    }
+
+    #[test]
+    fn test_normalize_deadline_keyword_eow() {
+        assert_eq!(DeadlineInference::normalize_deadline_keyword("eow"), "sunday");
+    }
+
+    #[test]
+    fn test_normalize_deadline_keyword_eom() {
+        assert_eq!(DeadlineInference::normalize_deadline_keyword("eom"), "month");
+    }
+
+    #[test]
+    fn test_normalize_deadline_keyword_eoy() {
+        assert_eq!(DeadlineInference::normalize_deadline_keyword("eoy"), "year");
+    }
+
+    #[test]
+    fn test_normalize_deadline_keyword_regular() {
+        assert_eq!(DeadlineInference::normalize_deadline_keyword("friday"), "friday");
+        assert_eq!(DeadlineInference::normalize_deadline_keyword("tomorrow"), "tomorrow");
+    }
+
+    #[test]
+    fn test_format_relative_deadline_seconds() {
+        let context = TimeContext::default();
+        assert_eq!(DeadlineInference::format_relative_deadline(30, &context), "30 seconds");
+    }
+
+    #[test]
+    fn test_format_relative_deadline_minutes() {
+        let context = TimeContext::default();
+        assert_eq!(DeadlineInference::format_relative_deadline(300, &context), "5 minutes");
+    }
+
+    #[test]
+    fn test_format_relative_deadline_hours() {
+        let context = TimeContext::default();
+        assert_eq!(DeadlineInference::format_relative_deadline(7200, &context), "2 hours");
+    }
+
+    #[test]
+    fn test_format_relative_deadline_days() {
+        let context = TimeContext::default();
+        assert_eq!(DeadlineInference::format_relative_deadline(172800, &context), "2 days");
+    }
+
+    #[test]
+    fn test_default_deadline_task() {
+        let result = DeadlineInference::default_deadline(ActionType::Task);
+        assert_eq!(result, Some("tomorrow".to_string()));
+    }
+
+    #[test]
+    fn test_default_deadline_record() {
+        let result = DeadlineInference::default_deadline(ActionType::Record);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_add_business_days_one_day() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::add_business_days(1, &context);
+        assert_eq!(result, "tomorrow");
+    }
+
+    #[test]
+    fn test_add_business_days_multiple_days() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::add_business_days(3, &context);
+        assert!(result.contains("days"));
+    }
+
+    #[test]
+    fn test_is_ambiguous_deadline_later() {
+        assert!(DeadlineInference::is_ambiguous_deadline("do this later"));
+    }
+
+    #[test]
+    fn test_is_ambiguous_deadline_sometime() {
+        assert!(DeadlineInference::is_ambiguous_deadline("finish sometime"));
+    }
+
+    #[test]
+    fn test_is_ambiguous_deadline_eventually() {
+        assert!(DeadlineInference::is_ambiguous_deadline("complete eventually"));
+    }
+
+    #[test]
+    fn test_is_ambiguous_deadline_someday() {
+        assert!(DeadlineInference::is_ambiguous_deadline("do it someday"));
+    }
+
+    #[test]
+    fn test_is_ambiguous_deadline_specific() {
+        assert!(!DeadlineInference::is_ambiguous_deadline("finish by tomorrow"));
+        assert!(!DeadlineInference::is_ambiguous_deadline("due today"));
+    }
+
+    #[test]
+    fn test_suggest_deadline_clarification_ambiguous() {
+        let result = DeadlineInference::suggest_deadline_clarification("do this later");
+        assert!(result.is_some());
+        let suggestion = result.unwrap();
+        assert!(suggestion.contains("When would you like"));
+    }
+
+    #[test]
+    fn test_suggest_deadline_clarification_specific() {
+        let result = DeadlineInference::suggest_deadline_clarification("finish by tomorrow");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_time_phrases_in_hours() {
+        let phrases = DeadlineInference::extract_time_phrases("complete in 2 hours");
+        assert!(!phrases.is_empty());
+        assert!(phrases.iter().any(|p| p.contains("in 2 hours")));
+    }
+
+    #[test]
+    fn test_extract_time_phrases_by_day() {
+        let phrases = DeadlineInference::extract_time_phrases("finish by Friday");
+        assert!(!phrases.is_empty());
+        assert!(phrases.iter().any(|p| p.contains("by Friday")));
+    }
+
+    #[test]
+    fn test_extract_time_phrases_due_tomorrow() {
+        let phrases = DeadlineInference::extract_time_phrases("task due tomorrow");
+        assert!(!phrases.is_empty());
+        assert!(phrases.iter().any(|p| p.contains("due tomorrow")));
+    }
+
+    #[test]
+    fn test_extract_time_phrases_next_week() {
+        let phrases = DeadlineInference::extract_time_phrases("review next week");
+        assert!(!phrases.is_empty());
+        assert!(phrases.iter().any(|p| p.contains("next week")));
+    }
+
+    #[test]
+    fn test_extract_time_phrases_multiple() {
+        let phrases = DeadlineInference::extract_time_phrases("urgent: finish by Friday, review next week");
+        assert!(phrases.len() >= 2);
+    }
+
+    #[test]
+    fn test_extract_time_phrases_none() {
+        let phrases = DeadlineInference::extract_time_phrases("just a regular task");
+        assert!(phrases.is_empty());
+    }
+
+    #[test]
+    fn test_infer_deadline_full_integration() {
+        let context = TimeContext::default();
+
+        // Test explicit deadline
+        let result = DeadlineInference::infer_deadline("finish by 5PM", &context, None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().source, DeadlineSource::Explicit);
+
+        // Test relative time
+        let result = DeadlineInference::infer_deadline("complete in 2 hours", &context, None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().source, DeadlineSource::RelativeTime);
+
+        // Test urgency
+        let result = DeadlineInference::infer_deadline("urgent task", &context, None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().source, DeadlineSource::Urgency);
+
+        // Test category-based
+        let result = DeadlineInference::infer_deadline("some task", &context, Some("urgent"));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().source, DeadlineSource::CategoryPattern);
+
+        // Test no deadline
+        let result = DeadlineInference::infer_deadline("just a task", &context, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_inferred_deadline_partial_eq() {
+        let dl1 = InferredDeadline {
+            deadline: "tomorrow".to_string(),
+            confidence: 0.9,
+            is_explicit: true,
+            source: DeadlineSource::Explicit,
+        };
+        let dl2 = InferredDeadline {
+            deadline: "tomorrow".to_string(),
+            confidence: 0.9,
+            is_explicit: true,
+            source: DeadlineSource::Explicit,
+        };
+        assert_eq!(dl1, dl2);
+    }
+
+    #[test]
+    fn test_deadline_source_partial_eq() {
+        assert_eq!(DeadlineSource::Explicit, DeadlineSource::Explicit);
+        assert_ne!(DeadlineSource::Explicit, DeadlineSource::RelativeTime);
+    }
+
+    // === DeadlineInference Edge Cases ===
+
+    #[test]
+    fn test_infer_deadline_empty_input() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_deadline("", &context, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_infer_deadline_case_insensitive() {
+        let context = TimeContext::default();
+        let result1 = DeadlineInference::infer_deadline("BY TOMORROW", &context, None);
+        let result2 = DeadlineInference::infer_deadline("by tomorrow", &context, None);
+        assert!(result1.is_some());
+        assert!(result2.is_some());
+        assert_eq!(result1.unwrap().deadline, result2.unwrap().deadline);
+    }
+
+    #[test]
+    fn test_infer_deadline_with_punctuation() {
+        let context = TimeContext::default();
+        let result = DeadlineInference::infer_deadline("finish by tomorrow!", &context, None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().deadline, "tomorrow");
     }
 }

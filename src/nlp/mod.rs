@@ -24,4 +24,4 @@ pub use types::*;
 pub use parser::NLPParser;
 pub use mapper::CommandMapper;
 pub use validator::CommandValidator;
-pub use context::{CommandContext, ContextualCommand, TimeContext, FuzzyMatcher};
+pub use context::{CommandContext, ContextualCommand, TimeContext, FuzzyMatcher, DeadlineInference, InferredDeadline};

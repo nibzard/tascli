@@ -147,7 +147,7 @@ fn execute_parsed_command(conn: &Connection, args: &[String]) -> Result<(), Stri
     // to directly call the action handlers instead of re-parsing
 
     // For now, let's create a mock CLI args structure
-    use crate::args::parser::{CliArgs, Action};
+    use crate::args::parser::{CliArgs};
     use clap::Parser;
 
     // Create command string

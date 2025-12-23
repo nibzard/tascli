@@ -39,9 +39,18 @@
 ## Phase 2: Enhanced Natural Language Understanding (Week 3-4)
 
 ### Context Awareness
-- [ ] Implement context tracking for previous commands
-- [ ] Add time context awareness (current time, day, etc.)
-- [ ] Create fuzzy matching for categories and existing tasks
+- [x] Implement context tracking for previous commands ✅
+  - Created CommandContext in src/nlp/context.rs
+  - Tracks command history with configurable depth
+  - Integrated into NLPParser with context management methods
+- [x] Add time context awareness (current time, day, etc.) ✅
+  - Created TimeContext with today/tomorrow/weekday support
+  - Automatically injects current date/time into parsing context
+  - Handles relative date references
+- [x] Create fuzzy matching for categories and existing tasks ✅
+  - Implemented FuzzyMatcher using Levenshtein distance
+  - Supports category and task name matching with configurable threshold
+  - Integrated with NLPParser context-aware parsing
 - [ ] Build intelligent deadline inference
 
 ### Advanced Parsing
@@ -98,8 +107,8 @@
 
 ## Implementation Status
 
-### Current Task: Phase 1 - Testing & Validation
-**Next Action**: Create integration tests for end-to-end flow
+### Current Task: Phase 2 - Context Awareness
+**Next Action**: Build intelligent deadline inference
 
 ### Completed Tasks ✅
 - Project analysis and architecture design
@@ -116,6 +125,12 @@
 - ✅ Build command mapper (NLP → tascli commands)
 - ✅ Add nlp subcommand to existing CLI
 - ✅ Write unit tests for NLP parsing
+- ✅ Phase 2 Context Awareness (Commit 6ef1acb)
+  - Context module with CommandContext, TimeContext, FuzzyMatcher
+  - NLPParser context-aware integration
+  - OpenAI client context support
+  - 48 new tests (43 context.rs + 5 parser.rs)
+  - All 527 tests passing
 
 ### Key Decisions Made
 - Use OpenAI Responses API with gpt-5-nano
